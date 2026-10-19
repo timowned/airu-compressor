@@ -1,0 +1,12 @@
+[
+  {
+    "file": "Tests/UIExports/photo-comp-2.avif",
+    "bytes": 81843,
+    "sha256": "c06730165d093bc9f498bb01432ae09ee2e6a4afe37e6f4c6f31ea446e6fa1e6"
+  },
+  {
+    "file": "Tests/UIExports/photo-comp.avif",
+    "bytes": 81843,
+    "sha256": "c06730165d093bc9f498bb01432ae09ee2e6a4afe37e6f4c6f31ea446e6fa1e6"
+  }
+]

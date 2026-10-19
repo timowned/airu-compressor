@@ -1,0 +1,11 @@
+The real photograph `photo.png` is Google's WebP gallery image 1:
+https://www.gstatic.com/webp/gallery/1.png
+https://developers.google.com/speed/webp/gallery
+Downloaded on 2026-10-20. SHA256 a391517dc3962aea18169a1da0dc2c2114dec2e04858eaef33892d0a70452e0d.
+Google's site content is licensed CC BY 4.0 unless otherwise noted; the photograph is used as an attributed test fixture.
+
+`photo.jpg`, `oriented.jpg`, and `profile-p3.png` derive from that photograph using
+`Scripts/make-fixtures.swift`. The P3 image also contains an out-of-sRGB patch.
+`transparent.png` and `tiny.png` are original generated graphics, licensed under the project's MIT license.
+The transparency fixture includes antialiased, partially transparent edges.
+Generated fixtures are committed so tests run offline without external downloads.

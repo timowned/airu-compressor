@@ -1,0 +1,4 @@
+swift test --package-path Packages/AiruUI --scratch-path .build/ui-tests
+Exit status: 0
+13 frontend tests passed in 31.450 seconds (2026-10-20 04:54).
+Release build and codesign --verify --deep --strict: passed.

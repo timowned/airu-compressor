@@ -1,0 +1,17 @@
+{
+  "name": "airu-development-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "figma": "node tools/run-figma.mjs",
+    "figma:test": "node tools/test-figma.mjs",
+    "figma:check": "node --test Tests/figma-cli.test.mjs && npm run figma:test"
+  },
+  "devDependencies": {
+    "figma-ds-cli": "file:tools/figma-cli"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

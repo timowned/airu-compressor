@@ -1,0 +1,25 @@
+.build/
+.swiftpm/
+dist/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+.cache/
+Resources/Encoders/bin/
+Resources/Encoders/lib/
+node_modules/
+tools/figma-cli/src/.figma-client-*.mjs
+
+# Local credentials and generated verification artifacts
+.env
+.env.*
+!.env.example
+*.airu-export.lock
+.airu-export.lock
+Tests/*.log
+Tests/*-sample.txt
+Tests/Output/
+Tests/ReproducedOutput/
+Tests/UIExports/
+Tests/ScrollingInput/
+Tests/end-to-end.ndjson

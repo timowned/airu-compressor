@@ -1,0 +1,53 @@
+import Foundation
+
+public struct EncoderRequest: Sendable {
+    public let format: ImageFormat
+    public let quality: Int
+    public let lossless: Bool
+    public let inputPNG: URL
+    public let originalJPEG: URL?
+    public let iccProfile: URL?
+    public let output: URL
+    public let threads: Int
+}
+public protocol EncoderAdapter: Sendable {
+    func encode(_ request: EncoderRequest, timeout: Double) async throws
+}
+public struct NativeEncoderAdapter: EncoderAdapter {
+    public let tools: Toolchain
+    public init(tools: Toolchain) { self.tools = tools }
+    public func encode(_ r: EncoderRequest, timeout: Double) async throws {
+        let tool: EncoderTool
+        var args: [String]
+        switch r.format {
+        case .avif:
+            tool = .avifenc
+            args = ["--jobs", String(r.threads), "--speed", "6", "--yuv", "444", "--qcolor", String(r.quality), "--qalpha", "100"]
+            if r.lossless { args += ["--lossless"] }
+            if let profile = r.iccProfile { args += ["--icc", profile.path] }
+            args += [r.inputPNG.path, r.output.path]
+        case .webp:
+            tool = .cwebp
+            args = ["-quiet", "-m", "6", "-q", String(r.quality), "-alpha_q", "100", "-exact", "-metadata", "icc"]
+            if r.lossless { args += ["-lossless"] } else { args += ["-sharp_yuv"] }
+            args += ["-o", r.output.path, "--", r.inputPNG.path]
+        case .jpeg:
+            if let original = r.originalJPEG, r.lossless {
+                tool = .jpegtran
+                args = ["-copy", "all", "-optimize", "-progressive", "-outfile", r.output.path, original.path]
+            } else {
+                tool = .cjpeg
+                args = ["-quality", String(r.quality), "-sample", "1x1", "-optimize", "-progressive"]
+                if let profile = r.iccProfile { args += ["-icc", profile.path] }
+                args += ["-outfile", r.output.path, r.inputPNG.path]
+            }
+        case .png:
+            tool = .oxipng
+            // Keep color profile chunks and hidden RGB. Do not use --alpha or --strip all.
+            args = ["-o", "3", "--nc", "--threads", String(r.threads), "--out", r.output.path, r.inputPNG.path]
+        case .heic: throw AiruError("unsupportedOutput", "HEIC is input-only")
+        }
+        _ = try await ProcessRunner().run(executable: tools.executable(tool), arguments: args, timeout: timeout)
+        guard try Files.size(r.output) > 0 else { throw AiruError("encodeFailed", "Encoder returned an empty file") }
+    }
+}

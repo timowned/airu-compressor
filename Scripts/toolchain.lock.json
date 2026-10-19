@@ -1,0 +1,381 @@
+{
+  "schemaVersion": 1,
+  "architecture": "arm64",
+  "bottleTag": "arm64_golden_gate",
+  "formulae": [
+    {
+      "name": "aom",
+      "version": "3.15.2",
+      "license": "BSD-2-Clause",
+      "source": {
+        "url": "https://aomedia.googlesource.com/aom.git",
+        "tag": "v3.15.2",
+        "revision": "af3dc9aadc793c1b00edc003e3fc19a44fdeb574",
+        "using": null,
+        "checksum": null
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/aom/blobs/sha256:ca3e34c2d919d712bdff0799bd15689ac8cbacea8d33508718a3813be45153bf",
+        "sha256": "ca3e34c2d919d712bdff0799bd15689ac8cbacea8d33508718a3813be45153bf"
+      }
+    },
+    {
+      "name": "brotli",
+      "version": "1.2.0",
+      "license": "MIT",
+      "source": {
+        "url": "https://github.com/google/brotli/archive/refs/tags/v1.2.0.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "816c96e8e8f193b40151dad7e8ff37b1221d019dbcb9c35cd3fadbfe6477dfec"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/brotli/blobs/sha256:4344732ad26e00a3a397dafee2e87ca1b4210e8605c24aefa9bf8ea3fc5f271a",
+        "sha256": "4344732ad26e00a3a397dafee2e87ca1b4210e8605c24aefa9bf8ea3fc5f271a"
+      }
+    },
+    {
+      "name": "dav1d",
+      "version": "1.5.4",
+      "license": "BSD-2-Clause",
+      "source": {
+        "url": "https://code.videolan.org/videolan/dav1d/-/archive/1.5.4/dav1d-1.5.4.tar.bz2",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/dav1d/blobs/sha256:7c717fd8cb95695007552885327049a18e741d3bfe3254e96a923b3c90ed4875",
+        "sha256": "7c717fd8cb95695007552885327049a18e741d3bfe3254e96a923b3c90ed4875"
+      }
+    },
+    {
+      "name": "giflib",
+      "version": "6.1.3",
+      "license": "MIT",
+      "source": {
+        "url": "https://downloads.sourceforge.net/project/giflib/giflib-6.x/giflib-6.1.3.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "b65b66b99f0424b93525f987386f22fc5efb9da2bfc92ad4a532249aaffbab0e"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/giflib/blobs/sha256:bdf5a53f053c10c716573cf955e5f50d704d97f9d2dedc781161031744b77849",
+        "sha256": "bdf5a53f053c10c716573cf955e5f50d704d97f9d2dedc781161031744b77849"
+      }
+    },
+    {
+      "name": "highway",
+      "version": "1.4.0",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "source": {
+        "url": "https://github.com/google/highway/archive/refs/tags/1.4.0.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "e72241ac9524bb653ae52ced768b508045d4438726a303f10181a38f764a453c"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/highway/blobs/sha256:803c7d7690dd7f8b43313965b8b2f96735667ef27fe85270cabe517a07d3e6f0",
+        "sha256": "803c7d7690dd7f8b43313965b8b2f96735667ef27fe85270cabe517a07d3e6f0"
+      }
+    },
+    {
+      "name": "imath",
+      "version": "3.2.3",
+      "license": "BSD-3-Clause",
+      "source": {
+        "url": "https://github.com/AcademySoftwareFoundation/Imath/archive/refs/tags/v3.2.3.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "e10c12b3f21f45bf08e09d4215d9c7691368d747beebd840de0b6fefed2df9f8"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/imath/blobs/sha256:f5857586c62cd0498c95c82f9d77825b01cd8eb7dc1043ceaf311950e9b33423",
+        "sha256": "f5857586c62cd0498c95c82f9d77825b01cd8eb7dc1043ceaf311950e9b33423"
+      }
+    },
+    {
+      "name": "jpeg-turbo",
+      "version": "3.2.0",
+      "license": "IJG AND Zlib AND BSD-3-Clause",
+      "source": {
+        "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/jpeg-turbo/blobs/sha256:7bc0f7c007a73c68da8c11055e836de66c2814c1b0ca0302da9a6317199fd37a",
+        "sha256": "7bc0f7c007a73c68da8c11055e836de66c2814c1b0ca0302da9a6317199fd37a"
+      }
+    },
+    {
+      "name": "jpeg-xl",
+      "version": "0.12.0_1",
+      "license": "BSD-3-Clause",
+      "source": {
+        "url": "https://github.com/libjxl/libjxl/archive/refs/tags/v0.12.0.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "03e9be69a30be4011f559da75328b6d7cea8ad921fabfbd551ce10bf45cdc992"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/jpeg-xl/blobs/sha256:f5613d8fd10ef72372c1fe2b14ccb51fa332f4119f916deabb9fa07b8a1f3f3a",
+        "sha256": "f5613d8fd10ef72372c1fe2b14ccb51fa332f4119f916deabb9fa07b8a1f3f3a"
+      }
+    },
+    {
+      "name": "libavif",
+      "version": "1.4.2",
+      "license": "BSD-2-Clause",
+      "source": {
+        "url": "https://github.com/AOMediaCodec/libavif/archive/refs/tags/v1.4.2.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "2b645287340ba5a631d268b551dc2d72bd73ac33335962dd36dcdb6d8366921d"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/libavif/blobs/sha256:f615b9691140a7dca60456cc6fa89f797039567d44637c5bedca28b7065a3190",
+        "sha256": "f615b9691140a7dca60456cc6fa89f797039567d44637c5bedca28b7065a3190"
+      }
+    },
+    {
+      "name": "libdeflate",
+      "version": "1.26",
+      "license": "MIT",
+      "source": {
+        "url": "https://github.com/ebiggers/libdeflate/archive/refs/tags/v1.26.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "bba03fffc5538576213675ce6968fcff6ce2e67d82e4d5febea2d05f9f13cf85"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/libdeflate/blobs/sha256:7ad79cc5ad2462380ffa1c0d0fae8f8649b3aa0d3ddba463a3a617238d405d00",
+        "sha256": "7ad79cc5ad2462380ffa1c0d0fae8f8649b3aa0d3ddba463a3a617238d405d00"
+      }
+    },
+    {
+      "name": "libpng",
+      "version": "1.6.59",
+      "license": "libpng-2.0",
+      "source": {
+        "url": "https://downloads.sourceforge.net/project/libpng/libpng16/1.6.59/libpng-1.6.59.tar.xz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "d80dd2a38a37f803cb9b6ac7b14bd6e74ddc3b654780a8380bdf93523fdb4389"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/libpng/blobs/sha256:7e04225ac0bc048d2b12c603f678e5fa36459909812f2f1306dbd97af337cdec",
+        "sha256": "7e04225ac0bc048d2b12c603f678e5fa36459909812f2f1306dbd97af337cdec"
+      }
+    },
+    {
+      "name": "libtiff",
+      "version": "4.7.2",
+      "license": "libtiff",
+      "source": {
+        "url": "https://download.osgeo.org/libtiff/tiff-4.7.2.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "672bd7d10aee4606171afb864f3570b83340f6a33e2c186dc0512f7145ffdf6a"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/libtiff/blobs/sha256:2678f5bb80b0578e79c76f747b637781ab3629b0c393e8c7d060ead4d42f9d6c",
+        "sha256": "2678f5bb80b0578e79c76f747b637781ab3629b0c393e8c7d060ead4d42f9d6c"
+      }
+    },
+    {
+      "name": "libvmaf",
+      "version": "3.2.1",
+      "license": "BSD-2-Clause-Patent",
+      "source": {
+        "url": "https://github.com/Netflix/vmaf/archive/refs/tags/v3.2.1.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "5df7386911bc15fd1ca783132528748d219768ae4fc5f8e0b61184f041648092"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/libvmaf/blobs/sha256:962e5b553f735b609bc632da6da1dfa0774b4e84aeef8dce638b748a9aff2966",
+        "sha256": "962e5b553f735b609bc632da6da1dfa0774b4e84aeef8dce638b748a9aff2966"
+      }
+    },
+    {
+      "name": "little-cms2",
+      "version": "2.19.1",
+      "license": "MIT",
+      "source": {
+        "url": "https://downloads.sourceforge.net/project/lcms/lcms/2.19.1/lcms2-2.19.1.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "bfc54f7bab59fbc921012014a8032e4cba4abd46db47d46b76416a8c0b2815c8"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/little-cms2/blobs/sha256:7bb337d2d9d577c7295721ba602ed5b49673f5285fbd359918b102ed363b3af9",
+        "sha256": "7bb337d2d9d577c7295721ba602ed5b49673f5285fbd359918b102ed363b3af9"
+      }
+    },
+    {
+      "name": "lz4",
+      "version": "1.10.0",
+      "license": "BSD-2-Clause",
+      "source": {
+        "url": "https://github.com/lz4/lz4/archive/refs/tags/v1.10.0.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/lz4/blobs/sha256:53ea7532077fe43abfe3d6e0d9991ebc8370e9edcc508f997c92902d60c8b151",
+        "sha256": "53ea7532077fe43abfe3d6e0d9991ebc8370e9edcc508f997c92902d60c8b151"
+      }
+    },
+    {
+      "name": "mozjpeg",
+      "version": "4.1.5",
+      "license": "IJG AND Zlib AND BSD-3-Clause",
+      "source": {
+        "url": "https://github.com/mozilla/mozjpeg/archive/refs/tags/v4.1.5.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "9fcbb7171f6ac383f5b391175d6fb3acde5e64c4c4727274eade84ed0998fcc1"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/mozjpeg/blobs/sha256:3a3d8f5b133c78c3cdb9d6ede5dbfee13c01aae3027d79d7283fd8601b4a78c3",
+        "sha256": "3a3d8f5b133c78c3cdb9d6ede5dbfee13c01aae3027d79d7283fd8601b4a78c3"
+      }
+    },
+    {
+      "name": "openexr",
+      "version": "3.5.2",
+      "license": "BSD-3-Clause",
+      "source": {
+        "url": "https://github.com/AcademySoftwareFoundation/openexr/archive/refs/tags/v3.5.2.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "85a291b9b8563fabef1aa3f6e912d744ce1d4b9fd5a8f978eda194cd51b15ae9"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/openexr/blobs/sha256:5253d81b12415e20841324740f399f92d070e09e75421ba914385e0374973620",
+        "sha256": "5253d81b12415e20841324740f399f92d070e09e75421ba914385e0374973620"
+      }
+    },
+    {
+      "name": "openjph",
+      "version": "0.32.0",
+      "license": "BSD-2-Clause",
+      "source": {
+        "url": "https://github.com/aous72/OpenJPH/archive/refs/tags/0.32.0.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "5cb1ebe18e5ee1322d23ff2130b37562d447d1ad5586c3d16cf84be3ae30f719"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/openjph/blobs/sha256:0b8eb7715378b2336cd0dd4b43cbbdd9e70aece80e76b7b3bb6420055adf6c5c",
+        "sha256": "0b8eb7715378b2336cd0dd4b43cbbdd9e70aece80e76b7b3bb6420055adf6c5c"
+      }
+    },
+    {
+      "name": "oxipng",
+      "version": "10.2.1",
+      "license": "MIT",
+      "source": {
+        "url": "https://github.com/oxipng/oxipng/archive/refs/tags/v10.2.1.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "460ccfcdcc9c3877b9f7fae1dfd4f2a3f93d3b2a2af3e3b62ca32b163f923cca"
+      },
+      "bottle": {
+        "cellar": ":any_skip_relocation",
+        "url": "https://ghcr.io/v2/homebrew/core/oxipng/blobs/sha256:db9a337fddbb8d2153ac22b5a9761298bfbb3b8ec6d6d51085a4586877843977",
+        "sha256": "db9a337fddbb8d2153ac22b5a9761298bfbb3b8ec6d6d51085a4586877843977"
+      }
+    },
+    {
+      "name": "webp",
+      "version": "1.6.0",
+      "license": "BSD-3-Clause",
+      "source": {
+        "url": "https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/webp/blobs/sha256:85d3cb86c87f53f027b48cdfe15a31e82932caa43344a6fe06e00e5de402a3e7",
+        "sha256": "85d3cb86c87f53f027b48cdfe15a31e82932caa43344a6fe06e00e5de402a3e7"
+      }
+    },
+    {
+      "name": "xz",
+      "version": "5.8.4",
+      "license": "0BSD AND GPL-2.0-or-later",
+      "source": {
+        "url": "https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "0014c7886930454fe8bd4228665b51af55eeae560ea135c9c4cd33f55b2591d9"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/xz/blobs/sha256:b2b5d6523153be05c20bcc51cd358ea3dd1f4bf893748fdedb779ab508ea63ce",
+        "sha256": "b2b5d6523153be05c20bcc51cd358ea3dd1f4bf893748fdedb779ab508ea63ce"
+      }
+    },
+    {
+      "name": "zstd",
+      "version": "1.5.7_1",
+      "license": "(BSD-3-Clause OR GPL-2.0-only) AND BSD-2-Clause AND MIT",
+      "source": {
+        "url": "https://github.com/facebook/zstd/archive/refs/tags/v1.5.7.tar.gz",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/zstd/blobs/sha256:7fb4af03304cc4897326168cdcd53290311c5543150f5502a61c3e84b6d62765",
+        "sha256": "7fb4af03304cc4897326168cdcd53290311c5543150f5502a61c3e84b6d62765"
+      }
+    }
+  ]
+}
