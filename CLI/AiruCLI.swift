@@ -12,14 +12,22 @@ private struct Arguments {
     var key: String?
     var concurrency = 2
     var json = false
+    var requestID: String?
+    var help = false
+    private var suppliedOptions: Set<String> = []
     init(_ args: [String]) throws {
         command = args.first ?? "help"
         var index = 1
         var explicitScore = false
         while index < args.count {
             let arg = args[index]; index += 1
+            if arg.hasPrefix("--"), arg != "--", !suppliedOptions.insert(arg).inserted {
+                throw AiruError("usage", "Duplicate option \(arg)")
+            }
             func value() throws -> String {
-                guard index < args.count else { throw AiruError("usage", "Missing value for \(arg)") }
+                guard index < args.count, !args[index].isEmpty, !args[index].hasPrefix("--") else {
+                    throw AiruError("usage", "Missing value for \(arg); use ./ for paths beginning with --")
+                }
                 defer { index += 1 }; return args[index]
             }
             switch arg {
@@ -41,6 +49,8 @@ private struct Arguments {
             case "--destination": destination = URL(fileURLWithPath: try value(), isDirectory: true)
             case "--key": key = try value()
             case "--json": json = true
+            case "--request-id": requestID = try value()
+            case "--help", "-h": help = true
             case "--": files += args[index...].map { URL(fileURLWithPath: $0) }; index = args.count
             default:
                 guard !arg.hasPrefix("--") else { throw AiruError("usage", "Unknown option \(arg)") }
@@ -49,8 +59,38 @@ private struct Arguments {
         }
         if options.pngMode == .superlight && !explicitScore { options.minimumScore = 80 }
     }
+    func validate() throws {
+        if let requestID {
+            guard (1...128).contains(requestID.utf8.count),
+                  !requestID.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                throw AiruError("usage", "Request ID must be 1...128 UTF-8 bytes with no control characters")
+            }
+        }
+        let name = ["--help", "-h"].contains(command) ? "help" : command
+        guard let contract = CommandContract.all.first(where: { $0.name == name }) else {
+            throw AiruError("usage", "Unknown command \(command); use capabilities for machine-readable usage")
+        }
+        if help { return }
+        let allowed = Set(contract.options + AgentCapabilities().globalOptions)
+        guard suppliedOptions.isSubset(of: allowed) else {
+            throw AiruError("usage", "Options not supported by \(name): \(suppliedOptions.subtracting(allowed).sorted().joined(separator: ", "))")
+        }
+        guard files.count >= contract.minimumFiles,
+              contract.maximumFiles.map({ files.count <= $0 }) ?? true else {
+            throw AiruError("usage", "Invalid input file count for \(name); use capabilities for limits")
+        }
+        for option in contract.requiredOptions where !suppliedOptions.contains(option) {
+            throw AiruError("usage", "\(name) requires \(option)")
+        }
+        if let key {
+            guard key.utf8.count == 64, key.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                throw AiruError("invalidCacheKey", "Cache keys must be lowercase SHA-256 values")
+            }
+        }
+        if ["prepare", "optimize", "batch"].contains(name) { try options.validate() }
+    }
 }
-private struct Event: Codable, Sendable {
+private struct Event: Encodable, Sendable {
     var protocolVersion = 1
     var sequence = 0
     var type: String
@@ -62,11 +102,17 @@ private struct Event: Codable, Sendable {
     var destinationURL: URL?
     var error: AiruError?
     var message: String?
+    var requestID: String?
+    var capabilities: AgentCapabilities?
+    var toolchain: ToolchainReport?
 }
 private actor Output {
     private var sequence = 0
+    private var requestID: String?
+    func correlate(_ value: String?) { requestID = value }
     func send(_ event: Event) {
         var event = event; sequence += 1; event.sequence = sequence
+        event.requestID = requestID
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         if let data = try? encoder.encode(event) { FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10])) }
     }
@@ -75,7 +121,16 @@ private actor Output {
     static func main() async {
         let output = Output()
         let task = Task { () -> Int32 in
-            do { return try await run(Arguments(Array(CommandLine.arguments.dropFirst())), output: output) }
+            do {
+                let args = try Arguments(Array(CommandLine.arguments.dropFirst()))
+                // Malformed IDs are not echoed into the protocol.
+                if let id = args.requestID, (1...128).contains(id.utf8.count),
+                   !id.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
+                    await output.correlate(id)
+                }
+                try args.validate()
+                return try await run(args, output: output)
+            }
             catch {
                 let error = AiruError.wrapping(error)
                 await output.send(Event(type: "error", error: error))
@@ -92,9 +147,10 @@ private actor Output {
         exit(code)
     }
     private static func run(_ args: Arguments, output: Output) async throws -> Int32 {
-        if ["help", "--help", "-h"].contains(args.command) {
+        if args.help || ["help", "--help", "-h"].contains(args.command) {
             print("""
             Airu — offline perceptual image compression (NDJSON protocol v1)
+            airu capabilities [--json]
             airu analyze FILE... [--json]
             airu prepare FILE [--format auto|avif|webp|jpeg|png] [OPTIONS]
             airu optimize FILE [--destination DIR] [OPTIONS]
@@ -104,9 +160,14 @@ private actor Output {
             OPTIONS: --tools DIR --cache DIR --mode airy|superlight --score N --candidates 24 --timeout 180 --threads 2
             Airy: lossless PNG, score 90 for other formats. Superlight: palette PNG, score 80 (minimum).
             --json suppresses progress; terminal records remain one JSON object per line.
+            --request-id ID echoes a caller correlation ID on protocol events.
+            Use capabilities for command limits, options, side effects and exit codes.
             Tools resolve only from --tools, AIRU_ENCODER_DIR or bundled Resources/Encoders.
             """)
             return 0
+        }
+        if args.command == "capabilities" {
+            await output.send(Event(type: "capabilities", capabilities: AgentCapabilities())); return 0
         }
         let cache = args.cache.map { CompressionCache(root: $0) } ?? CompressionCache()
         if args.command == "export" {
@@ -118,6 +179,7 @@ private actor Output {
             guard !args.files.isEmpty else { throw AiruError("usage", "No input files") }
             var failed = false
             for file in args.files {
+                try Task.checkCancellation()
                 do { await output.send(Event(type: "analysis", sourceURL: file, analysis: try ImageAnalyzer().analyze(file))) }
                 catch { failed = true; await output.send(Event(type: "error", sourceURL: file, error: .wrapping(error))) }
             }
@@ -125,8 +187,18 @@ private actor Output {
         }
         let tools = try args.tools.map { Toolchain(directory: $0) } ?? Toolchain.bundled()
         if args.command == "doctor" {
-            let fingerprint = try tools.fingerprint()
-            await output.send(Event(type: "toolchain", message: "All \(EncoderTool.allCases.count) tools executable; SHA256 \(fingerprint)")); return 0
+            let availability = EncoderTool.allCases.map { tool in
+                ToolAvailability(name: tool, executableURL: tools.directory.appendingPathComponent("bin/\(tool.rawValue)"),
+                                 executable: (try? tools.executable(tool)) != nil)
+            }
+            let allExecutable = availability.allSatisfy(\.executable)
+            let fingerprint = allExecutable ? try tools.fingerprint() : nil
+            let report = ToolchainReport(directoryURL: tools.directory, tools: availability,
+                                         allExecutable: allExecutable, fingerprint: fingerprint)
+            await output.send(Event(type: "toolchain", error: allExecutable ? nil : AiruError("missingEncoder", "One or more required tools are missing or not executable"),
+                                    message: allExecutable ? "All \(availability.count) tools executable; SHA256 \(fingerprint!)" : "Toolchain is incomplete",
+                                    toolchain: report))
+            return allExecutable ? 0 : 1
         }
         let engine = CompressionEngine(tools: tools, cache: cache)
         if args.command == "batch" {
@@ -148,10 +220,15 @@ private actor Output {
             }
             if let destination = args.destination {
                 for job in snapshot.jobs where job.status == .ready {
+                    try Task.checkCancellation()
                     do {
                         let url = try await processor.export(job.id, to: destination)
                         await output.send(Event(type: "exported", sourceURL: job.sourceURL, destinationURL: url))
-                    } catch { await output.send(Event(type: "error", sourceURL: job.sourceURL, error: .wrapping(error))) }
+                    } catch {
+                        let error = AiruError.wrapping(error)
+                        if error.code == "cancelled" { throw error }
+                        await output.send(Event(type: "error", sourceURL: job.sourceURL, error: error))
+                    }
                 }
             }
             let final = await processor.snapshot()

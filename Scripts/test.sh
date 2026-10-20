@@ -5,3 +5,4 @@ swift build
 swift test --package-path Packages/AiruCore --scratch-path .build/core-tests
 swift test --package-path Packages/AiruUI --scratch-path .build/ui-tests
 python3 Scripts/test-cli.py
+python3 Scripts/test-agent-cli.py

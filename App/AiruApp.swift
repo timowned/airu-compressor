@@ -18,7 +18,10 @@ import AiruUI
     private let model = CompressionViewModel()
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set the running Dock tile explicitly, including launches from a rebuilt local bundle.
-        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+        let iconName = (Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String ?? "AppIcon")
+            .replacingOccurrences(of: ".icns", with: "")
+        if let iconURL = Bundle.main.url(forResource: iconName, withExtension: "icns")
+            ?? Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = icon
         }

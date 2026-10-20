@@ -4,6 +4,8 @@ All processing commands write UTF-8 NDJSON to stdout, one complete JSON object p
 
 Every record has `protocolVersion: 1`, `sequence` (starts at 1 for each CLI invocation), and `type`. Optional fields are omitted when absent. Codable URLs are absolute `file:` URL strings; decode URL escaping before treating them as filesystem paths. Sizes are signed 64-bit byte counts, progress is 0...1, savings is a percentage (negative for larger forced conversions), and scores are finite measured doubles. Do not treat an omitted score as zero.
 
+For agent integrations, start with `airu capabilities --json` and [the agent workflow guide](AGENT_WORKFLOW.md). `--request-id ID` adds `requestID` to all events after successful argument parsing, including validation and runtime failures. IDs must contain 1...128 UTF-8 bytes without control characters. Invalid IDs and argument-parsing errors omit correlation; maintain a subprocess-to-request mapping too. Correlation does not change cache identity or make export idempotent.
+
 | type | Fields | Meaning |
 | --- | --- | --- |
 | analysis | sourceURL, analysis | Content validation and source metadata |
@@ -13,7 +15,8 @@ Every record has `protocolVersion: 1`, `sequence` (starts at 1 for each CLI invo
 | batchProgress | batch | Complete current snapshot; jobs, total progress, isFinished |
 | batchCompleted | batch | Terminal snapshot including individual failures |
 | error | error, optional sourceURL | Stable error code plus human-readable message |
-| toolchain | message | Doctor's executable/fingerprint report |
+| toolchain | message, toolchain, optional error | Doctor's per-tool availability/fingerprint report; incomplete explicit tool bundles exit 1 |
+| capabilities | capabilities | Versioned command/option contract, defaults, terminal events, write effects, exit codes; no tools required |
 
 Example records (shortened fields here only):
 
@@ -25,6 +28,7 @@ Example records (shortened fields here only):
 Commands:
 
 ```sh
+airu capabilities [--json]
 airu analyze FILE... [--json]
 airu prepare FILE [OPTIONS]
 airu optimize FILE [--destination DIR] [OPTIONS]
@@ -34,6 +38,12 @@ airu doctor --tools DIR
 ```
 
 Options: `--mode airy|superlight` (default Airy), `--format auto|avif|webp|jpeg|png` (`jpg` alias accepted), `--score N` (90 for Airy, 80 for Superlight; Superlight minimum 80), `--candidates 24` (4...64), `--timeout 180` (1...3600 seconds), `--threads 2` (1...8), `--tools DIR`, `--cache DIR`, `--json`. Put `--` before filenames starting with option prefixes. CLI concurrency is 1...8. Analysis/export do not require an encoder directory.
+
+Global options are `--json`, `--request-id`, `--tools`, `--cache`, and `--help` (`-h` alias). Tools/cache are accepted globally for compatibility but unused by discovery/analysis. `COMMAND --help` prints usage without processing. Unknown commands, duplicate options, inappropriate command options, incorrect file counts, invalid keys, and invalid optimization limits fail before tool discovery or writes. Use `./` for option values whose path starts with `--`; the `--` separator applies to positional files only. Command-specific options and constraints are defined by the same Swift contract returned by `capabilities`.
+
+`capabilities.contractVersion` and `eventProtocolVersion` are currently 1. The payload contains `commands` with `minimumFiles`, optional `maximumFiles` (omitted means unbounded), `options`, `requiredOptions`, `terminalEvents`, and `writes`. Option descriptors provide `name`, `valueType`, optional `allowedValues`, `defaultValue` (descriptive string), and numeric bounds. `defaultOptimizationOptions` provides typed defaults; `modeScoreDefaults` describes implicit mode-specific score selection. Fatal errors can replace a command's normal terminal events; batch errors can coexist with successes.
+
+`toolchain` contains `directoryURL`, `tools` (`name`, `executableURL`, `executable`), `allExecutable`, and optional `fingerprint`. Doctor checks executable availability and hashes, not dynamic-library loading or actual encoder execution. No resolvable bundle yields an `error` record with `missingToolchain`.
 
 Tool location priority: `--tools`, `AIRU_ENCODER_DIR`, bundled `Resources/Encoders` next to the CLI/application. No global PATH resolution. Cache defaults to the user's `Library/Caches/Airu/v1`.
 

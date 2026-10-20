@@ -5,6 +5,7 @@ if [[ ! -f Resources/Encoders/manifest.json ]]; then
   echo "Bundle tools first: python3 Scripts/fetch-tools.py && python3 Scripts/bundle-tools.py --prefix .build/toolchain" >&2
   exit 1
 fi
+swift Scripts/generate-icon.swift --generate
 swift build -c release --arch arm64
 airu_cli_bin="$(swift build -c release --arch arm64 --show-bin-path)"
 xcodebuild -project Airu.xcodeproj -scheme Airu -configuration Release -derivedDataPath .build/xcode \
@@ -13,6 +14,9 @@ mkdir -p dist
 ditto .build/xcode/Build/Products/Release/Airu.app dist/Airu.app
 ditto Resources/Encoders dist/Airu.app/Contents/Resources/Encoders
 cp "$airu_cli_bin/airu" dist/Airu.app/Contents/MacOS/airu-cli
+# actool's partial plist selects its compatibility ICNS; use our complete family.
+/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AiruIcon" dist/Airu.app/Contents/Info.plist
+swift Scripts/generate-icon.swift --package dist/Airu.app
 identity="${AIRU_SIGN_IDENTITY:--}"
 signing_options=(--options 0)
 if [[ "$identity" != "-" ]]; then signing_options=(--options runtime); fi

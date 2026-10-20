@@ -65,8 +65,9 @@ struct FormatSelector: View {
     }
 }
 
-/// Exact Figma panel: 260×156, 10-point inset, 35-point choices, no system arrow.
+/// Four 60-point format choices with 2-point padding and a 10-point panel inset.
 struct FormatMenuContent: View {
+    static let panelWidth: CGFloat = 276
     @Bindable var state: FormatMenuState
     let dismiss: () -> Void
     @Namespace private var selection
@@ -80,7 +81,7 @@ struct FormatMenuContent: View {
                 sectionLabel("Format", opacity: 0.7)
                 HStack(spacing: 0) {
                     ForEach([OutputFormat.jpeg, .avif, .webp, .png], id: \.self) { format in
-                        choice(format.label, selected: state.value == format, group: "format",
+                        choice(format.label, selected: state.value == format, group: "format", width: 60,
                                enabled: format != .jpeg || state.jpegAllowed) {
                             withAnimation(selectionAnimation) { state.value = format }
                             state.select(format)
@@ -113,7 +114,7 @@ struct FormatMenuContent: View {
                 .background(Color(white: 24/255), in: RoundedRectangle(cornerRadius: 8))
             }
         }
-        .padding(10).frame(width: 260, height: 156)
+        .padding(10).frame(width: Self.panelWidth, height: 156)
         .background(AiruStyle.control, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(AiruStyle.controlBorder, lineWidth: 1))
         .animation(selectionAnimation, value: state.value)
@@ -124,11 +125,11 @@ struct FormatMenuContent: View {
         Text(text).font(AiruStyle.text(13)).foregroundStyle(.white.opacity(opacity)).frame(height: 10)
     }
     private func choice(_ label: String, selected: Bool, group: String,
-                        enabled: Bool = true, action: @escaping () -> Void) -> some View {
+                        width: CGFloat? = nil, enabled: Bool = true, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label).font(AiruStyle.text(13, .medium)).lineLimit(1)
                 .foregroundStyle(selected ? Color.white : Color(white: 165/255))
-                .frame(maxWidth: .infinity).frame(height: 35)
+                .frame(maxWidth: width == nil ? .infinity : nil).frame(width: width, height: 35)
                 .background {
                     if selected {
                         RoundedRectangle(cornerRadius: 6.5).fill(AiruStyle.controlBorder)
@@ -183,7 +184,7 @@ private struct FormatMenuAnchor: NSViewRepresentable {
             }
             guard let window = anchor.window else { return }
             let anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
-            let panel = FormatPanel(contentRect: NSRect(x: anchorRect.minX, y: anchorRect.maxY + 10, width: 260, height: 156),
+            let panel = FormatPanel(contentRect: NSRect(x: anchorRect.minX, y: anchorRect.maxY + 10, width: FormatMenuContent.panelWidth, height: 156),
                                     styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.title = "Output format"; panel.isOpaque = false; panel.backgroundColor = .clear
             panel.hasShadow = false; panel.level = .popUpMenu; panel.hidesOnDeactivate = true
