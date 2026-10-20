@@ -7,7 +7,7 @@ public struct PerceptualEvaluator: Sendable {
     func referenceImages(_ original: CGImage, alpha: Bool, directory: URL) throws -> [URL] {
         try (alpha ? [CGFloat(0), CGFloat(1)] : [CGFloat(1)]).enumerated().map { index, background in
             let url = directory.appendingPathComponent("reference-\(index).png")
-            let space = original.colorSpace?.model == .rgb ? original.colorSpace : nil
+            let space = ImageAnalyzer.rgbColorSpace(original)
             try Raster.writePNG(Raster.rgba(original, background: background, colorSpace: space), to: url)
             return url
         }
@@ -26,7 +26,7 @@ public struct PerceptualEvaluator: Sendable {
             try Task.checkCancellation()
             let file = directory.appendingPathComponent("comparison-\(index).png")
             defer { Files.remove(file) }
-            let space = original.colorSpace?.model == .rgb ? original.colorSpace : nil
+            let space = ImageAnalyzer.rgbColorSpace(original)
             try Raster.writePNG(Raster.rgba(candidate, background: alpha && index == 0 ? 0 : 1, colorSpace: space), to: file)
             let output: ProcessOutput
             do {

@@ -43,8 +43,25 @@ public struct NativeEncoderAdapter: EncoderAdapter {
             }
         case .png:
             tool = .oxipng
+            let deadline = Date().addingTimeInterval(timeout)
+            let untagged = r.output.deletingLastPathComponent().appendingPathComponent("untagged-\(UUID()).png")
+            let palette = r.output.deletingLastPathComponent().appendingPathComponent("palette-\(UUID()).png")
+            defer { Files.remove(untagged); Files.remove(palette) }
+            if !r.lossless {
+                try PNGColorMetadata.removingColor(from: r.inputPNG, to: untagged)
+                // This quality scale controls libimagequant's palette search, not SSIMULACRA2.
+                // min=0 ensures poor probes are returned for our independent metric to reject.
+                _ = try await ProcessRunner().run(executable: tools.executable(.pngquant),
+                    arguments: ["--speed", "4", "--quality", "0-\(r.quality)", "--output", palette.path, "--", untagged.path],
+                    timeout: deadline.timeIntervalSinceNow)
+                try PNGColorMetadata.restoringColor(from: r.inputPNG, in: palette)
+            }
             // Keep color profile chunks and hidden RGB. Do not use --alpha or --strip all.
-            args = ["-o", "3", "--nc", "--threads", String(r.threads), "--out", r.output.path, r.inputPNG.path]
+            args = ["-o", "3", "--nc", "--threads", String(r.threads), "--out", r.output.path,
+                    r.lossless ? r.inputPNG.path : palette.path]
+            _ = try await ProcessRunner().run(executable: tools.executable(tool), arguments: args, timeout: deadline.timeIntervalSinceNow)
+            guard try Files.size(r.output) > 0 else { throw AiruError("encodeFailed", "PNG pipeline returned an empty file") }
+            return
         case .heic: throw AiruError("unsupportedOutput", "HEIC is input-only")
         }
         _ = try await ProcessRunner().run(executable: tools.executable(tool), arguments: args, timeout: timeout)

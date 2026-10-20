@@ -6,6 +6,7 @@ import AiruCore
 public struct MainWindow: View {
     @Bindable private var model: CompressionViewModel
     @State private var isDropTarget = false
+    @State private var formatMenuPresented = false
     public init(model: CompressionViewModel) { self.model = model }
     public var body: some View {
         VStack(spacing: 0) {
@@ -15,6 +16,8 @@ public struct MainWindow: View {
                     Text("Coming soon...")
                         .font(AiruStyle.text(16, .medium)).foregroundStyle(AiruStyle.muted)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if model.isPresentingImportAnalysis {
+                    ImportAnalysisView().padding(AiruStyle.inset)
                 } else if model.jobs.isEmpty {
                     DropZoneView(isTargeted: isDropTarget, browse: model.browseFiles)
                         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTarget, perform: acceptDrop)
@@ -36,7 +39,6 @@ public struct MainWindow: View {
                         }
                     }
                     .animation(.easeInOut(duration: 0.4), value: isDropTarget)
-                    .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTarget, perform: acceptDrop)
                 }
             }
         }
@@ -44,6 +46,9 @@ public struct MainWindow: View {
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .frame(minWidth: 640, minHeight: 430)
+        .contentShape(Rectangle())
+        .onDrop(of: model.mode == .auto && !model.jobs.isEmpty ? [UTType.fileURL.identifier] : [],
+                isTargeted: $isDropTarget, perform: acceptDrop)
         .alert("Airu", isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button("OK") { model.alert = nil }
         } message: { Text(model.alert?.message ?? "") }
@@ -72,9 +77,9 @@ public struct MainWindow: View {
             HStack {
                 WindowTrafficLights().frame(width: 60, height: 14)
                 Spacer()
-                if !model.jobs.isEmpty {
+                if !model.jobs.isEmpty && !model.isPresentingImportAnalysis {
                     Button(action: model.browseFiles) {
-                        Image(systemName: "plus").font(.system(size: 20, weight: .ultraLight)).foregroundStyle(Color(white: 0.7))
+                        DesignAsset(name: "Add", width: 16, height: 16)
                             .frame(width: 40, height: 40)
                     }
                     .buttonStyle(.plain).airuLiquidGlass().accessibilityLabel("Add images")
@@ -86,13 +91,18 @@ public struct MainWindow: View {
     }
     private var footer: some View {
         HStack(alignment: .bottom, spacing: 12) {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Compress to").font(.system(size: 13, weight: .regular)).foregroundStyle(.white.opacity(0.8))
-                FormatSelector(value: model.defaultFormat, caption: "Default output format", jpegAllowed: model.canUseJPEG,
-                               select: model.setDefaultFormat)
+                    .frame(height: 9)
+                    .opacity(formatMenuPresented ? 0 : 1)
+                    .accessibilityHidden(formatMenuPresented)
+                    .animation(.easeInOut(duration: 0.16), value: formatMenuPresented)
+                FormatSelector(value: model.defaultFormat, profile: model.defaultProfile,
+                               caption: "Default output format", jpegAllowed: model.canUseJPEG,
+                               onPresentationChange: { formatMenuPresented = $0 },
+                               select: model.setDefaultFormat, selectProfile: model.setDefaultProfile)
                     .accessibilityIdentifier("default-format")
             }
-            Spacer(minLength: 0)
             DestinationPicker(url: model.destinations.defaultURL) { Task { await model.chooseDestination() } }
             Spacer(minLength: 0)
             Button(action: model.exportAll) {
@@ -109,11 +119,19 @@ public struct MainWindow: View {
     }
     private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
         let matching = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
-        for provider in matching {
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                let url = (item as? URL) ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
-                if let url { Task { @MainActor in model.importFiles([url]) } }
+        // Resolve the drop as one ordered import, so asynchronous URL loading cannot shuffle rows.
+        Task { @MainActor in
+            var urls: [URL] = []
+            for provider in matching {
+                let url: URL? = await withCheckedContinuation { continuation in
+                    provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                        let url = (item as? URL) ?? (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) }
+                        continuation.resume(returning: url)
+                    }
+                }
+                if let url { urls.append(url) }
             }
+            if !urls.isEmpty { model.importFiles(urls, showAnalysisScreen: true) }
         }
         return !matching.isEmpty
     }
@@ -126,23 +144,35 @@ private struct DropZoneGlow: View {
         GeometryReader { geometry in
             TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { context in
                 let elapsed = reduceMotion ? 0 : context.date.timeIntervalSince(startedAt)
-                // Two slow, continuous paths drift independently without snapping at loop boundaries.
-                let x = sin(elapsed * 2 * .pi / 70) * geometry.size.width * 0.25
-                let y = sin(elapsed * 2 * .pi / 95) * geometry.size.height * 0.16
-                // Figma's raster export retains blur/noise effects unsupported by asset-catalog SVGs.
-                ZStack {
-                    DesignAsset(name: "DropGlowRaster", width: 600, height: 332)
-                    // Add 30% intensity; the base texture already uses full view opacity.
-                    DesignAsset(name: "DropGlowRaster", width: 600, height: 332)
-                        .opacity(0.3).blendMode(.plusLighter)
-                }
-                    .compositingGroup()
-                    .scaleEffect(max(1.8, geometry.size.width / 600 * 1.8, geometry.size.height / 332 * 1.8))
-                    .position(x: geometry.size.width / 2 + 9.28 + x,
-                              y: geometry.size.height / 2 - 23.67 + y)
+                // Keep the illuminated rim attached to all four edges; gently vary its color phase.
+                Image("DropEdgeGlow", bundle: .module).resizable().renderingMode(.original)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .saturation(0.65)
+                    .hueRotation(.degrees(sin(elapsed * 2 * .pi / 80) * 3))
+                    .opacity(0.68)
+                    .background(Color(white: 12/255))
             }
         }
         .clipped().allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
+
+struct ImportAnalysisView: View {
+    var body: some View {
+        ZStack {
+            Color(red: 5/255, green: 7/255, blue: 10/255)
+            DropZoneGlow()
+            VStack(spacing: 18) {
+                AiruSpinner(analysis: true)
+                Text("Analyzing...").font(AiruStyle.text(16, .semibold)).foregroundStyle(.white)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.18), lineWidth: 1.5))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Analyzing imported images")
+        .accessibilityIdentifier("import-analysis")
     }
 }
 
@@ -166,7 +196,7 @@ struct DropZoneView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .animation(.easeInOut(duration: 0.4), value: isTargeted)
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isTargeted ? Color(white: 0.36) : AiruStyle.border,
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(isTargeted ? Color(white: 0.62) : AiruStyle.border,
                          style: StrokeStyle(lineWidth: 1.5, dash: [10, 10])))
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }
@@ -179,24 +209,45 @@ struct DropZoneView: View {
 struct DestinationPicker: View {
     let url: URL
     let choose: () -> Void
+    @State private var hovering = false
+    @State private var folderHovered = false
+    private var containerHovered: Bool { hovering && !folderHovered }
+    init(url: URL, hovering: Bool = false, folderHovered: Bool = false, choose: @escaping () -> Void) {
+        self.url = url
+        self.choose = choose
+        _hovering = State(initialValue: hovering)
+        _folderHovered = State(initialValue: folderHovered)
+    }
     var body: some View {
-        HStack(spacing: 12) {
-            Button(action: choose) { DesignAsset(name: "FolderOpen", width: 14, height: 10.7569) }
-                .buttonStyle(AiruButtonStyle()).accessibilityLabel("Choose default export folder")
-            Button(action: choose) {
-                HStack(spacing: 8) {
+        Button(action: choose) {
+            HStack(spacing: 8) {
+                HStack(spacing: 0) {
+                    DesignAsset(name: folderHovered ? "DestinationHover" : "DestinationIdle", width: 30, height: 30)
+                        .contentShape(Rectangle())
+                        .onHover { folderHovered = $0 }
+                    AiruStyle.controlBorder.frame(width: 1, height: 36).opacity(hovering ? 0 : 1)
+                }
+                HStack(spacing: 10) {
                     breadcrumb(url.deletingLastPathComponent().lastPathComponent)
-                    DesignAsset(name: "PathChevron", width: 5.06066, height: 8.70711)
+                    DesignAsset(name: "PathChevron", width: 5.06066, height: 8.70711).frame(width: 4, height: 8)
                     breadcrumb(url.lastPathComponent)
                 }
             }
-            .buttonStyle(.plain).accessibilityLabel("Export destination, \(url.path)").help(url.path)
+            .padding(.leading, 2).padding(.trailing, 10).frame(height: 36)
+            .background(containerHovered ? Color(white: 39/255) : AiruStyle.control, in: RoundedRectangle(cornerRadius: 9))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(containerHovered ? Color(white: 48/255) : AiruStyle.controlBorder))
+            .padding(1).background(Color(white: 19/255), in: RoundedRectangle(cornerRadius: 10))
         }
-        .frame(height: 38)
+        .buttonStyle(.plain).foregroundStyle(.white)
+        .onHover {
+            hovering = $0
+            if !$0 { folderHovered = false }
+        }
+        .accessibilityLabel("Choose export folder, \(url.path)").help(url.path)
     }
     private func breadcrumb(_ name: String) -> some View {
         HStack(spacing: 4) {
-            DesignAsset(name: "Folder", width: 12.444, height: 12.444)
+            DesignAsset(name: "Folder", width: 12.444, height: 12.444).padding(1.778)
             Text(name).font(AiruStyle.text(12)).lineLimit(1).truncationMode(.middle)
         }
     }

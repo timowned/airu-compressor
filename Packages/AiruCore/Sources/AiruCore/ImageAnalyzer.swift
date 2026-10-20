@@ -31,14 +31,17 @@ public struct ImageAnalyzer: Sendable {
         }
         let orientation = props[kCGImagePropertyOrientation] as? Int ?? 1
         let swap = (5...8).contains(orientation)
-        let icc = image.colorSpace?.copyICCData() as Data?
-        return ImageInfo(sourceURL: url.standardizedFileURL, originalFilename: url.lastPathComponent, format: format,
+        let space = Self.rgbColorSpace(image) ?? image.colorSpace
+        let icc = space?.copyICCData() as Data?
+        var info = ImageInfo(sourceURL: url.standardizedFileURL, originalFilename: url.lastPathComponent, format: format,
                          fileSize: try Files.size(url), width: swap ? h : w, height: swap ? w : h,
                          storedWidth: w, storedHeight: h,
-                         colorProfile: image.colorSpace?.name as String? ?? props[kCGImagePropertyProfileName] as? String,
+                         colorProfile: space?.name as String? ?? props[kCGImagePropertyProfileName] as? String,
                          colorProfileSHA256: icc.map(Files.hash), hasAlpha: Self.hasAlpha(image), orientation: orientation,
                          bitsPerComponent: image.bitsPerComponent, canDecode: true, frameCount: frames,
                          contentSHA256: try Files.digest(url))
+        info.containsTransparency = try Raster.containsTransparency(image)
+        return info
     }
     static func format(_ type: String) -> ImageFormat? {
         switch type {
@@ -53,12 +56,17 @@ public struct ImageAnalyzer: Sendable {
     static func hasAlpha(_ image: CGImage) -> Bool {
         [.first, .last, .premultipliedFirst, .premultipliedLast, .alphaOnly].contains(image.alphaInfo)
     }
+    static func rgbColorSpace(_ image: CGImage) -> CGColorSpace? {
+        var space = image.colorSpace
+        while space?.model == .indexed { space = space?.baseColorSpace }
+        return space?.model == .rgb ? space : nil
+    }
 }
 
 /// Each job retains its full-resolution raster only while encoding/evaluating it.
 enum Raster {
     static func materialize(_ image: CGImage) throws -> CGImage {
-        let space = image.colorSpace?.model == .rgb ? image.colorSpace! : CGColorSpace(name: CGColorSpace.sRGB)!
+        let space = ImageAnalyzer.rgbColorSpace(image) ?? CGColorSpace(name: CGColorSpace.sRGB)!
         let alpha = ImageAnalyzer.hasAlpha(image)
         guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
             bytesPerRow: image.width * 4, space: space,
@@ -106,6 +114,14 @@ enum Raster {
         ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         guard let output = ctx.makeImage() else { throw AiruError("decodeFailed", "Comparison raster unavailable") }
         return output
+    }
+    static func containsTransparency(_ image: CGImage) throws -> Bool {
+        guard ImageAnalyzer.hasAlpha(image) else { return false }
+        let raster = try rgba(image)
+        guard let data = raster.dataProvider?.data as Data? else {
+            throw AiruError("decodeFailed", "Cannot inspect image transparency")
+        }
+        return stride(from: 3, to: data.count, by: 4).contains { data[$0] != 255 }
     }
     static func alphaMatches(_ lhs: CGImage, _ rhs: CGImage) throws -> Bool {
         let a = try rgba(lhs), b = try rgba(rhs)

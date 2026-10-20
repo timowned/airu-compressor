@@ -21,19 +21,36 @@ enum AiruStyle {
 struct AiruButtonStyle: ButtonStyle {
     var kind: Kind = .secondary
     enum Kind { case primary, secondary, success, working }
-    @Environment(\.isEnabled) private var isEnabled
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
+        AiruStyledButton(label: configuration.label, kind: kind, pressed: configuration.isPressed)
+    }
+}
+
+private struct AiruStyledButton<Label: View>: View {
+    let label: Label
+    let kind: AiruButtonStyle.Kind
+    let pressed: Bool
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovering = false
+    var body: some View {
+        label
             .font(AiruStyle.text(13, .medium))
             .foregroundStyle(foreground)
             .padding(.horizontal, 10)
             .frame(height: 36)
-            .background(background.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 9))
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(kind == .primary ? Color(white: 0.4) : AiruStyle.controlBorder, lineWidth: 1))
+            .background {
+                RoundedRectangle(cornerRadius: 9).fill(background.opacity(pressed ? 0.75 : 1))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(Color.black.opacity(kind == .primary && hovering && isEnabled ? 0.15 : 0))
+                    }
+            }
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(kind == .primary ? Color(white: 19/255) : AiruStyle.controlBorder, lineWidth: 1))
             .padding(1)
-            .background(Color(white: 19/255), in: RoundedRectangle(cornerRadius: 10))
+            .background(kind == .primary ? Color(white: 102/255) : Color(white: 19/255), in: RoundedRectangle(cornerRadius: 10))
             .opacity(!isEnabled && kind == .secondary ? 0.45 : 1)
             .contentShape(RoundedRectangle(cornerRadius: 10))
+            .onHover { hovering = $0 }
     }
     private var foreground: Color {
         switch kind { case .primary: .black; case .secondary: .white; case .success: AiruStyle.green; case .working: AiruStyle.yellow }
@@ -49,11 +66,26 @@ struct AiruButtonStyle: ButtonStyle {
 }
 
 extension View {
-    @ViewBuilder func airuLiquidGlass() -> some View {
+    func airuLiquidGlass() -> some View { modifier(AiruLiquidGlass()) }
+}
+
+private struct AiruLiquidGlass: ViewModifier {
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
+    func body(content: Content) -> some View {
+        material(content)
+            .overlay {
+                Capsule().fill(.white.opacity(hovering && isEnabled ? 0.06 : 0))
+                    .allowsHitTesting(false)
+            }
+            .contentShape(Capsule())
+            .onHover { hovering = $0 }
+    }
+    @ViewBuilder private func material(_ content: Content) -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: Capsule())
+            content.glassEffect(.regular.interactive(), in: Capsule())
         } else {
-            self.background(.ultraThinMaterial, in: Capsule())
+            content.background(.ultraThinMaterial, in: Capsule())
         }
     }
 }
@@ -71,12 +103,15 @@ struct DesignAsset: View {
 /// The original Figma spinner artwork, animated only while real work is active.
 struct AiruSpinner: View {
     var button = false
+    var analysis = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var rotating = false
     var body: some View {
-        DesignAsset(name: button ? "ButtonSpinner" : "RowSpinner", width: button ? 12 : 11, height: button ? 12 : 11)
+        Image(button ? "ButtonSpinner" : "RowSpinner", bundle: .module).resizable()
+            .renderingMode(analysis ? .template : .original).foregroundStyle(.white)
+            .frame(width: analysis ? 24 : (button ? 12 : 11), height: analysis ? 24 : (button ? 12 : 11))
             .rotationEffect(.degrees(rotating && !reduceMotion ? 360 : 0))
-            .animation(reduceMotion ? nil : .linear(duration: 1).repeatForever(autoreverses: false), value: rotating)
+            .animation(reduceMotion ? nil : .timingCurve(0.42, 0, 0.58, 1, duration: 2).repeatForever(autoreverses: false), value: rotating)
             .onAppear { rotating = true }
     }
 }

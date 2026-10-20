@@ -1,6 +1,10 @@
 import Foundation
 import Testing
 import AiruCore
+import SwiftUI
+import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 @testable import AiruUI
 
 @MainActor private struct Context {
@@ -36,6 +40,151 @@ import AiruCore
 }
 
 @MainActor @Suite(.serialized) struct FrontendTests {
+    @Test func largeThumbnailSpansThreeRowsAndStartsAtSmallImageCenter() {
+        let thumbnail = CGRect(x: 0, y: 15, width: 22, height: 22)
+        let layout = ThumbnailPreviewLayout(thumbnail: thumbnail, viewport: CGSize(width: 600, height: 255))
+        #expect(layout.frame.height == 140)
+        #expect(layout.frame.minY == 7)
+        #expect(layout.frame.maxY == 147)
+        #expect(layout.imageFrame(at: 0) == thumbnail)
+        #expect(layout.imageFrame(at: 1) == layout.frame)
+        let halfway = layout.imageFrame(at: 0.5)
+        #expect(halfway.width > 22 && halfway.width < 140)
+        #expect(halfway.midX == (thumbnail.midX + layout.frame.midX) / 2)
+        let bottom = ThumbnailPreviewLayout(thumbnail: CGRect(x: 0, y: 219, width: 22, height: 22),
+                                           viewport: CGSize(width: 600, height: 255))
+        #expect(bottom.frame.minY >= 6)
+        #expect(bottom.frame.maxY <= 249)
+        #expect(bottom.imageFrame(at: 0).midY == 230)
+    }
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["AIRU_RENDER_UI"] == "1", "Optional native preview render"))
+    func renderLargeThumbnailPreview() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        let source = c.fixture("photo.jpg")
+        let job = ImageJobViewModel(source: source, format: .auto)
+        job.info = try ImageAnalyzer().analyze(source)
+        let image = try #require(await ImageThumbnailLoader.shared.image(at: source,
+            contentIdentity: job.info!.contentSHA256, maximumPixels: 512))
+        let layout = ThumbnailPreviewLayout(thumbnail: CGRect(x: 0, y: 15, width: 22, height: 22),
+                                           viewport: CGSize(width: 600, height: 255))
+        let content = ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                ForEach(0..<5) { _ in
+                    Rectangle().fill(.white.opacity(0.1)).frame(height: 1)
+                    HStack {
+                        Text("photo.jpg").font(AiruStyle.text(13)).padding(.leading, 32)
+                        Spacer()
+                        Text("375KB").font(AiruStyle.text(13))
+                    }.foregroundStyle(.white).frame(height: 50)
+                }
+            }
+            LargeThumbnailPreview(job: job, thumbnail: image, layout: layout, dismiss: {})
+                .modifier(ThumbnailPreviewTransform(progress: 1, layout: layout))
+                .position(x: layout.frame.midX, y: layout.frame.midY)
+        }.frame(width: 600, height: 255).padding(20).background(AiruStyle.background)
+        let renderer = ImageRenderer(content: content); renderer.scale = 2
+        let bitmap = try #require(renderer.cgImage)
+        let url = c.project.appendingPathComponent("Tests/Screenshots/thumbnail-preview.png")
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, bitmap, nil)
+        #expect(CGImageDestinationFinalize(destination))
+    }
+    @Test func thumbnailsAreSmallOrientedCachedAndInvalidateWithContent() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        let source = try c.copy("photo.jpg", to: "preview image.jpg")
+        let firstInfo = try ImageAnalyzer().analyze(source)
+        let first = try #require(await ImageThumbnailLoader.shared.image(at: source, contentIdentity: firstInfo.contentSHA256))
+        #expect(max(first.width, first.height) <= 88)
+        #expect(first.width > first.height)
+        let cached = try #require(await ImageThumbnailLoader.shared.image(at: source, contentIdentity: firstInfo.contentSHA256))
+        #expect(first === cached)
+        try Data(contentsOf: c.fixture("oriented.jpg")).write(to: source)
+        let changed = try ImageAnalyzer().analyze(source)
+        let rotated = try #require(await ImageThumbnailLoader.shared.image(at: source, contentIdentity: changed.contentSHA256))
+        #expect(rotated.height > rotated.width)
+        #expect(max(rotated.width, rotated.height) <= 88)
+        let broken = c.root.appendingPathComponent("broken.png")
+        try Data("broken".utf8).write(to: broken)
+        #expect(await ImageThumbnailLoader.shared.image(at: broken, contentIdentity: "broken") == nil)
+    }
+
+    @Test func cancellingCLIWaitsForPipeReaderCleanup() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        for _ in 0..<4 {
+            let (updates, continuation) = AsyncStream<Void>.makeStream()
+            let service = c.service, source = c.fixture("photo.png")
+            let task = Task {
+                defer { continuation.finish() }
+                return try await service.prepare(source, format: .png, minimumScore: 80, pngMode: .superlight) { _ in
+                    continuation.yield(())
+                }
+            }
+            var iterator = updates.makeAsyncIterator()
+            #expect(await iterator.next() != nil)
+            task.cancel()
+            do {
+                _ = try await task.value
+                Issue.record("Cancelled CLI should not return a prepared result")
+            } catch is CancellationError { }
+        }
+    }
+
+    @Test func resetRestoresOriginalAndWaitsForAirufy() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.importFiles([c.fixture("photo.png"), c.fixture("photo.jpg")])
+        try await c.model.waitUntilIdle()
+        c.model.setDefaultFormat(.webp)
+        try await c.model.waitUntilIdle()
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let job = c.model.jobs[0], other = c.model.jobs[1]
+        #expect(job.canReset)
+        let oldExport = try #require(job.exportedURL)
+        let oldBytes = try Data(contentsOf: oldExport)
+        let otherExport = other.exportedURL, otherKey = other.result?.cacheKey
+        let resetRevision = job.resetRevision
+        c.model.reset(job)
+        #expect(job.resetRevision == resetRevision + 1)
+        try await c.model.waitUntilIdle()
+        #expect(job.status == .ready); #expect(job.result == nil)
+        #expect(job.exportedURL == nil); #expect(job.revealURL == job.sourceURL)
+        #expect(job.progress == 0); #expect(!job.compressionRequested); #expect(!job.canReset)
+        #expect(!c.model.allCompleted); #expect(c.model.hasReadyFiles)
+        #expect(try Data(contentsOf: oldExport) == oldBytes)
+        c.model.setDefaultFormat(.avif); c.model.setDefaultProfile(.superlight)
+        try await c.model.waitUntilIdle()
+        #expect(job.result == nil)
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        #expect(job.status == .completed)
+        #expect(job.result?.selectedFormat == .avif)
+        #expect(job.result?.options.minimumScore == 80)
+        #expect(job.result?.options.pngMode == .superlight)
+        #expect(job.result?.source.sourceURL == c.fixture("photo.png"))
+        #expect(other.status == .completed); #expect(other.exportedURL == otherExport)
+        #expect(other.result?.cacheKey == otherKey)
+        #expect(try Data(contentsOf: oldExport) == oldBytes)
+    }
+    @Test func pngModeSelectsLosslessOrPalettePipeline() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.setDefaultFormat(.png)
+        c.model.importFiles([c.fixture("palette-graphic.png")]); try await c.model.waitUntilIdle()
+        let job = c.model.jobs[0]
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let airy = try #require(job.result)
+        #expect(airy.options.pngMode == .airy)
+        #expect(airy.candidates.count == 1 && airy.candidates[0].lossless)
+        c.model.reset(job); try await c.model.waitUntilIdle()
+        c.model.setDefaultProfile(.superlight)
+        #expect(job.result == nil)
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let superlight = try #require(job.result)
+        #expect(job.status == .completed)
+        #expect(superlight.options.pngMode == .superlight)
+        #expect(superlight.options.minimumScore == 80)
+        #expect(try #require(superlight.perceptualScore) >= 80)
+        #expect(superlight.outputSize < airy.outputSize)
+        #expect(superlight.cacheKey != airy.cacheKey)
+    }
+
     @Test func importAndFormatSelectionDoNotCompress() async throws {
         let c = try Context(); defer { c.cleanup() }
         c.model.importFiles([c.fixture("photo.jpg")])
@@ -43,10 +192,16 @@ import AiruCore
         let job = try #require(c.model.jobs.first)
         #expect(job.info != nil); #expect(job.status == .ready)
         #expect(job.result == nil); #expect(job.exportedURL == nil)
+        #expect(job.revealURL == job.sourceURL)
         #expect(job.progress == 0); #expect(c.model.batchProgress == 0)
         #expect(c.model.hasReadyFiles); #expect(!c.model.isCompressing)
         c.model.setDefaultFormat(.webp)
+        #expect(job.status == .ready)
+        #expect(job.info != nil)
         c.model.setFormat(.png, for: job)
+        #expect(job.status == .ready)
+        c.model.setDefaultProfile(.superlight)
+        #expect(job.status == .ready)
         try await c.model.waitUntilIdle()
         #expect(job.requestedFormat == .png); #expect(job.result == nil)
         #expect(!FileManager.default.fileExists(atPath: c.root.appendingPathComponent("cache").path))
@@ -55,12 +210,25 @@ import AiruCore
     @Test func airufyCompressesQualityChecksAndExportsJPEG() async throws {
         let c = try Context(); defer { c.cleanup() }
         c.model.importFiles([c.fixture("photo.jpg")]); try await c.model.waitUntilIdle()
-        c.model.exportAll(); try await c.model.waitUntilIdle()
         let job = c.model.jobs[0]
+        var percentages = [job.progressPercentage]
+        c.model.exportAll()
+        while job.isBusy {
+            percentages.append(job.progressPercentage)
+            if job.result == nil { #expect(job.progressPercentage < 100) }
+            if job.status == .exporting { #expect(job.progressPercentage == 100) }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await c.model.waitUntilIdle()
+        percentages.append(job.progressPercentage)
+        #expect(percentages.first == 0); #expect(percentages.last == 100)
+        #expect(percentages.contains { $0 > 0 && $0 < 100 })
+        #expect(zip(percentages, percentages.dropFirst()).allSatisfy { $0 <= $1 })
         let result = try #require(job.result)
         #expect(job.status == .completed); #expect(c.model.allCompleted)
         #expect(result.perceptualScore! >= 90); #expect(result.outputSize < result.source.fileSize)
         let url = try #require(job.exportedURL)
+        #expect(job.revealURL == url)
         #expect(url.lastPathComponent == "photo-comp.avif")
         #expect(try ImageAnalyzer().analyze(url).fileSize == result.outputSize)
     }
@@ -189,14 +357,52 @@ import AiruCore
     @Test func addingFilesDuringCompressionWaitsForAnotherClick() async throws {
         let c = try Context(); defer { c.cleanup() }
         c.model.importFiles([c.fixture("photo.jpg")]); try await c.model.waitUntilIdle()
+        let original = c.model.jobs[0]
         c.model.exportAll()
         c.model.importFiles([c.fixture("tiny.png")])
         try await c.model.waitUntilIdle()
-        #expect(c.model.jobs[0].status == .completed)
-        let added = c.model.jobs[1]
+        #expect(original.status == .completed)
+        #expect(c.model.jobs.last?.id == original.id)
+        let added = c.model.jobs[0]
         #expect(added.status == .ready); #expect(added.result == nil); #expect(added.exportedURL == nil)
         c.model.exportAll(); try await c.model.waitUntilIdle()
         #expect(c.model.allCompleted)
+    }
+    @Test func newImportsPrependAndCompletedFilesRemainUnchanged() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.setDefaultFormat(.png)
+        c.model.importFiles([c.fixture("photo.jpg")]); try await c.model.waitUntilIdle()
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let original = c.model.jobs[0]
+        let result = try #require(original.result), url = try #require(original.exportedURL)
+        let bytes = try Data(contentsOf: url)
+        let modified = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        c.model.importFiles([c.fixture("oriented.jpg"), c.fixture("transparent.png"), c.fixture("photo.jpg")])
+        try await c.model.waitUntilIdle()
+        #expect(c.model.jobs.map(\.filename) == ["oriented.jpg", "transparent.png", "photo.jpg"])
+        c.model.setDefaultFormat(.webp); try await c.model.waitUntilIdle()
+        #expect(original.status == .completed); #expect(original.requestedFormat == .png)
+        #expect(original.result?.cacheKey == result.cacheKey); #expect(original.exportedURL == url)
+        #expect(c.model.jobs.prefix(2).allSatisfy { $0.result == nil && $0.requestedFormat == .webp })
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        #expect(c.model.allCompleted)
+        #expect(original.result?.cacheKey == result.cacheKey); #expect(original.exportedURL == url)
+        #expect(try Data(contentsOf: url) == bytes)
+        #expect(try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == modified)
+        #expect(try FileManager.default.contentsOfDirectory(at: url.deletingLastPathComponent(), includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.hasPrefix("photo-comp") }.count == 1)
+    }
+    @Test func completedTransparencyDoesNotBlockJPEGForNewFiles() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.setDefaultFormat(.png)
+        c.model.importFiles([c.fixture("transparent.png")]); try await c.model.waitUntilIdle()
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let completed = c.model.jobs[0]
+        c.model.importFiles([c.fixture("photo.jpg")]); try await c.model.waitUntilIdle()
+        #expect(c.model.canUseJPEG)
+        c.model.setDefaultFormat(.jpeg); try await c.model.waitUntilIdle()
+        #expect(c.model.jobs[0].requestedFormat == .jpeg)
+        #expect(completed.status == .completed); #expect(completed.requestedFormat == .png)
     }
     @Test func changingFormatCancelsCompressionAndWaitsForAnotherClick() async throws {
         let c = try Context(); defer { c.cleanup() }
@@ -209,6 +415,129 @@ import AiruCore
         #expect(job.status == .ready); #expect(job.result == nil); #expect(job.exportedURL == nil)
         c.model.exportAll(); try await c.model.waitUntilIdle()
         #expect(job.status == .completed); #expect(job.result?.selectedFormat == .png)
+    }
+    @Test func superlightUsesTarget80AndLeavesCompletedAiryFilesUnchanged() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.setDefaultFormat(.webp)
+        c.model.importFiles([c.fixture("photo.jpg")]); try await c.model.waitUntilIdle()
+        #expect(c.model.defaultProfile == .airy)
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let old = c.model.jobs[0], oldResult = try #require(c.model.jobs[0].result)
+        let oldURL = try #require(old.exportedURL)
+        #expect(oldResult.options.minimumScore == 90)
+        c.model.setDefaultProfile(.superlight)
+        c.model.importFiles([c.fixture("oriented.jpg")]); try await c.model.waitUntilIdle()
+        let pending = c.model.jobs[0]
+        c.model.setDefaultProfile(.airy); c.model.setDefaultProfile(.superlight)
+        try await c.model.waitUntilIdle()
+        #expect(pending.requestedProfile == .superlight); #expect(pending.result == nil)
+        #expect(pending.progress == 0); #expect(!c.model.isCompressing)
+        #expect(old.status == .completed); #expect(old.requestedProfile == .airy)
+        #expect(old.exportedURL == oldURL); #expect(old.result?.cacheKey == oldResult.cacheKey)
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let result = try #require(pending.result)
+        #expect(pending.status == .completed); #expect(result.options.minimumScore == 80)
+        #expect(try #require(result.perceptualScore) >= 80)
+        #expect(old.exportedURL == oldURL); #expect(old.result?.options.minimumScore == 90)
+    }
+    @Test func droppedFilesShowAnalysisForAtLeastThreeSecondsWithoutCompression() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        let clock = ContinuousClock(), start = ContinuousClock.now
+        c.model.importFiles([c.fixture("photo.jpg")], showAnalysisScreen: true)
+        #expect(c.model.isPresentingImportAnalysis)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(c.model.isPresentingImportAnalysis)
+        try await c.model.waitUntilIdle()
+        #expect(start.duration(to: clock.now) >= .seconds(3))
+        #expect(!c.model.isPresentingImportAnalysis)
+        #expect(c.model.jobs[0].info != nil); #expect(c.model.jobs[0].result == nil)
+        #expect(c.model.jobs[0].status == .ready)
+    }
+    @Test func cancellingImportClearsAnalysisPresentation() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.importFiles([c.fixture("photo.jpg")], showAnalysisScreen: true)
+        c.model.cancelAll(); try await c.model.waitUntilIdle()
+        #expect(!c.model.isPresentingImportAnalysis)
+    }
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["AIRU_RENDER_UI"] == "1", "Run Scripts/render-analysis.sh to compile native image assets"))
+    func renderImportAnalysisReference() throws {
+        let c = try Context(); defer { c.cleanup() }
+        let renderer = ImageRenderer(content: ImportAnalysisView().frame(width: 600, height: 332))
+        renderer.scale = 2
+        let image = try #require(renderer.cgImage)
+        let folder = c.project.appendingPathComponent("Tests/Screenshots")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("auto-analyzing.png")
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        #expect(image.width == 1200 && image.height == 664)
+    }
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["AIRU_RENDER_UI"] == "1", "Run Scripts/render-analysis.sh to compile native image assets"))
+    func renderDropEdgeReference() throws {
+        let c = try Context(); defer { c.cleanup() }
+        let renderer = ImageRenderer(content: DropZoneView(isTargeted: true, browse: {}).frame(width: 600, height: 332))
+        renderer.scale = 2
+        let image = try #require(renderer.cgImage)
+        let folder = c.project.appendingPathComponent("Tests/Screenshots")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent("drop-edge-glow.png")
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        #expect(image.width == 1200 && image.height == 664)
+    }
+    @Test func formatSelectorHugsItsSelectedContent() {
+        func size(_ format: OutputFormat, _ profile: CompressionProfile) -> CGSize {
+            let view = FormatSelector(value: format, profile: profile, jpegAllowed: true, select: { _ in }, selectProfile: { _ in })
+            return NSHostingView(rootView: view).fittingSize
+        }
+        let jpeg = size(.jpeg, .airy), png = size(.png, .airy), superlight = size(.jpeg, .superlight)
+        #expect(jpeg.height == 38); #expect(superlight.height == 38)
+        #expect(png.width < jpeg.width)
+        #expect(superlight.width > jpeg.width + 20)
+    }
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["AIRU_RENDER_UI"] == "1", "Compile native image assets before rendering"))
+    func renderFigmaComponentsReference() throws {
+        let c = try Context(); defer { c.cleanup() }
+        let content = VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top, spacing: 24) {
+                FormatMenuContent(state: FormatMenuState(value: .jpeg, profile: .airy, jpegAllowed: true,
+                                                        select: { _ in }, selectProfile: { _ in }), dismiss: {})
+                VStack(alignment: .leading, spacing: 20) {
+                    DestinationPicker(url: URL(fileURLWithPath: "/Users/timparanitsa/Desktop"), choose: {})
+                    DestinationPicker(url: URL(fileURLWithPath: "/Users/timparanitsa/Desktop"), hovering: true, folderHovered: true, choose: {})
+                    DestinationPicker(url: URL(fileURLWithPath: "/Users/timparanitsa/Desktop"), hovering: true, choose: {})
+                }
+            }
+            HStack(spacing: 24) {
+                FormatSelector(value: .jpeg, profile: .airy, jpegAllowed: true, select: { _ in }, selectProfile: { _ in })
+                DestinationPicker(url: URL(fileURLWithPath: "/Users/timparanitsa/Desktop"), choose: {})
+                Button("Airufy") {}.buttonStyle(AiruButtonStyle(kind: .primary))
+            }
+            HStack(spacing: 24) {
+                FormatSelector(value: .png, profile: .airy, jpegAllowed: true, select: { _ in }, selectProfile: { _ in })
+                FormatSelector(value: .webp, profile: .superlight, jpegAllowed: true, select: { _ in }, selectProfile: { _ in })
+            }
+        }.padding(16).background(AiruStyle.background).preferredColorScheme(.dark)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 2
+        let image = try #require(renderer.cgImage)
+        let folder = c.project.appendingPathComponent("Tests/Screenshots")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let output = folder.appendingPathComponent("figma-components.png")
+        let destination = try #require(CGImageDestinationCreateWithURL(output as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+    }
+    @Test func destinationWidthIsUnchangedOnHover() {
+        let url = URL(fileURLWithPath: "/Users/timparanitsa/Desktop")
+        let idle = NSHostingView(rootView: DestinationPicker(url: url, choose: {})).fittingSize
+        let hover = NSHostingView(rootView: DestinationPicker(url: url, hovering: true, choose: {})).fittingSize
+        let folderHover = NSHostingView(rootView: DestinationPicker(url: url, hovering: true, folderHovered: true, choose: {})).fittingSize
+        #expect(idle == hover)
+        #expect(idle == folderHover)
+        #expect(idle.height == 38)
     }
     @Test func destinationBookmarkRoundTrip() throws {
         let c = try Context(); defer { c.cleanup() }

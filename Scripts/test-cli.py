@@ -44,6 +44,18 @@ with tempfile.TemporaryDirectory(prefix="airu-cli-test-") as temp:
     run("prepare", FIXTURES / "photo.jpg", "--score", "nan", expected=1)
     run("export", "--key", "../escape", "--cache", directory / "cache", "--destination", directory, expected=1, include_tools=False)
     check(run("doctor")[0]["type"] == "toolchain", "Toolchain discovery failed")
+    airy_events = run("prepare", FIXTURES / "palette-graphic.png", "--format", "png", "--mode", "airy", "--json")
+    airy = airy_events[-1]["result"]
+    check(airy["options"]["pngMode"] == "airy" and all(c["lossless"] for c in airy["candidates"]), "Airy PNG must remain lossless")
+    light_events = run("optimize", FIXTURES / "palette-graphic.png", "--format", "png", "--mode", "superlight",
+                       "--destination", directory / "palette", "--json")
+    light = light_events[0]["result"]
+    check(light["options"]["minimumScore"] == 80 and light["perceptualScore"] >= 80, "Superlight PNG requires measured score >=80")
+    check(light["outputSize"] < airy["outputSize"] and light["cacheKey"] != airy["cacheKey"], "PNG mode selection/cache separation failed")
+    check(any(not c["lossless"] and c["bytes"] == light["outputSize"] for c in light["candidates"]), "Palette pipeline was not selected")
+    check(light_events[-1]["type"] == "exported", "Palette PNG export failed")
+    run("prepare", FIXTURES / "photo.png", "--mode", "superlight", "--score", "79", expected=1)
+    run("prepare", FIXTURES / "photo.png", "--mode", "invalid", expected=1)
     packaged = ROOT / "dist/Airu.app/Contents/MacOS/airu-cli"
     if packaged.exists():
         # No development tool directory, Homebrew executable, or inherited DYLD path.

@@ -9,7 +9,7 @@ import argparse, hashlib, json, os, pathlib, re, shutil, subprocess, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOLS = {"avifenc": "libavif", "avifdec": "libavif", "cwebp": "webp", "dwebp": "webp",
-         "cjpeg": "mozjpeg", "jpegtran": "mozjpeg", "oxipng": "oxipng", "ssimulacra2": "jpeg-xl"}
+         "cjpeg": "mozjpeg", "jpegtran": "mozjpeg", "oxipng": "oxipng", "ssimulacra2": "jpeg-xl", "pngquant": "pngquant"}
 
 def run(*args):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)

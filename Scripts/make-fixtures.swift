@@ -31,4 +31,25 @@ let tiny = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesP
                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
 tiny.setFillColor(CGColor(gray: 0.5, alpha: 1)); tiny.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
 save(tiny.makeImage()!, "tiny.png")
+// A deterministic, lightly textured gradient exercises palette quantization,
+// wide-gamut metadata, and binary transparency without storing private screenshots.
+var seed: UInt32 = 42
+for alpha in [false, true] {
+    var pixels = [UInt8](repeating: 255, count: 256 * 128 * 4)
+    for y in 0..<128 { for x in 0..<256 {
+        let i = (y * 256 + x) * 4
+        seed = seed &* 1664525 &+ 1013904223
+        let noise = Int(seed >> 24) % 7 - 3
+        let visible = !alpha || x < 224
+        pixels[i] = visible ? UInt8(64 + x / 2 + noise) : 0
+        pixels[i + 1] = visible ? UInt8(64 + y / 2 + noise) : 0
+        pixels[i + 2] = visible ? UInt8(200 - x / 4 + noise) : 0
+        pixels[i + 3] = visible ? 255 : 0
+    } }
+    let image = CGImage(width: 256, height: 128, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 1024,
+                        space: p3, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                        provider: CGDataProvider(data: Data(pixels) as CFData)!, decode: nil,
+                        shouldInterpolate: false, intent: .defaultIntent)!
+    save(image, alpha ? "palette-alpha.png" : "palette-graphic.png")
+}
 print("Generated JPEG, EXIF rotation, Display P3 ICC, alpha-edge, and tiny fixtures")

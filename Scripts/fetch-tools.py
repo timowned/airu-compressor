@@ -8,6 +8,7 @@ DOWNLOADS = ROOT / ".build/downloads"
 lock = json.loads((ROOT / "Scripts/toolchain.lock.json").read_text())
 parser = argparse.ArgumentParser()
 parser.add_argument("--archives", type=pathlib.Path, help="Optional directory containing previously downloaded bottle tarballs")
+parser.add_argument("--only", choices=[f["name"] for f in lock["formulae"]], help="Fetch one locked dependency into an existing prefix")
 args = parser.parse_args()
 existing = {}
 if args.archives:
@@ -16,6 +17,7 @@ if args.archives:
 DOWNLOADS.mkdir(parents=True, exist_ok=True)
 PREFIX.mkdir(parents=True, exist_ok=True)
 for formula in lock["formulae"]:
+    if args.only and formula["name"] != args.only: continue
     bottle = formula["bottle"]
     archive = DOWNLOADS / (bottle["sha256"] + ".tar.gz")
     if not archive.exists() and bottle["sha256"] in existing:

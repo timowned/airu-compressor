@@ -1,6 +1,6 @@
 # Airu
 
-Native, offline image optimization with real AVIF, WebP, MozJPEG, OxiPNG, and SSIMULACRA2 processes. The backend is independent of presentation. The native SwiftUI application implements Auto Mode from the Airu Figma file, with Apple Liquid Glass navigation controls. Manual mode displays “Coming soon...”.
+Native, offline image optimization with real AVIF, WebP, MozJPEG, OxiPNG, libimagequant (pngquant), and SSIMULACRA2 processes. The backend is independent of presentation. The native SwiftUI application implements Auto Mode from the Airu Figma file, with Apple Liquid Glass navigation controls. Manual mode displays “Coming soon...”.
 
 ## Build and run
 
@@ -15,7 +15,7 @@ bash Scripts/test.sh
 
 The fetch step downloads immutable, checksum-pinned archives; subsequent builds and all image processing are offline. Python is only a build dependency. End users receive the app, CLI, encoders, libraries, and licenses together and install no additional software.
 
-For development only, `brew install libavif webp mozjpeg oxipng jpeg-xl` followed by `python3 Scripts/bundle-tools.py` bundles matching installed versions. The bundler refuses versions that do not match the lock.
+For development only, `brew install libavif webp mozjpeg oxipng jpeg-xl pngquant` followed by `python3 Scripts/bundle-tools.py` bundles matching installed versions. The bundler refuses versions that do not match the lock.
 
 ```sh
 swift build
@@ -35,7 +35,7 @@ Step A is `prepare`; it returns verified, measured output sizes and a cache key.
 
 ## Native application
 
-Open `dist/Airu.app` in Finder after building. Click the drop zone or use ⌘O to select images. Import only analyzes and validates files, showing their original sizes. Select the format and destination, then click Airufy to start real compression, quality evaluation and export. Hover or keyboard-focus a row for removal, per-file format, folder and Airufy controls; the context menu offers the same actions. Completed rows show measured compressed sizes and can reveal files in Finder. Format changes clear the previous result and wait for another Airufy click; valid cached candidates are reused when compression is requested. Manual mode remains “Coming soon...”.
+Open `dist/Airu.app` in Finder after building. Click the drop zone or use ⌘O to select images. Import only analyzes and validates files, showing their original sizes. Drops show the glowing “Analyzing...” screen for at least three seconds while real analysis runs. Additional drops anywhere in the populated window add files at the top. Shared format changes and subsequent Airufy runs leave completed files unchanged. Select the format and destination, then click Airufy to start real compression, quality evaluation and export. Hover or keyboard-focus a row for removal and Show controls. Shared format and folder controls remain in the footer; per-file overrides are available in the context menu. Completed rows show measured compressed sizes and can reveal files in Finder. Format changes clear the previous result and wait for another Airufy click; valid cached candidates are reused when compression is requested. The format dropdown stays open for selection changes and closes on outside click. Airy uses lossless OxiPNG for PNG output and targets SSIMULACRA2 90 for other formats. Superlight uses libimagequant through pngquant followed by OxiPNG for PNG output, with an adaptive SSIMULACRA2 target of at least 80. Manual mode remains “Coming soon...”.
 
 The UI launches the bundled `airu-cli` helper with typed arguments and decodes protocol-v1 NDJSON. It never implements compression itself. The distinct helper filename avoids a collision with the `Airu` GUI executable on case-insensitive macOS volumes. Xcode Build alone omits the helper and encoder bundle: use `bash Scripts/build.sh` to run the app.
 
@@ -45,7 +45,7 @@ The UI launches the bundled `airu-cli` helper with typed arguments and decodes p
 - EXIF orientation is baked into a full-resolution processing raster. Width/height refer to visual dimensions, including orientation swaps. No output is resized.
 - ICC profiles travel through PNG intermediates and explicit encoder metadata arguments. The evaluator composites in the reference RGB profile and uses SSIMULACRA2's color management to compare in its perceptual space. This preserves wide-gamut comparison information rather than clipping everything into 8-bit sRGB.
 - Default acceptance is SSIMULACRA2 ≥90. Each codec has independent search bounds. Lossless fallback candidates and bounded binary probes are evaluated; the accepted candidate with the smallest **actual byte count** wins. This is the best among evaluated candidates, not a proof of a global optimum or an absolute guarantee of imperceptibility.
-- Auto evaluates AVIF/WebP and JPEG for opaque photographs, and lossless PNG plus appropriate alternatives for PNG input. Alpha excludes JPEG and must match exactly. Transparent candidates are evaluated against black and white; the lower score controls acceptance.
+- Auto evaluates AVIF/WebP and JPEG for opaque photographs, and the selected PNG pipeline plus appropriate alternatives for PNG input. Actual transparency excludes JPEG and alpha values must match exactly. Transparent candidates are evaluated against black and white; the lower score controls acceptance.
 - The default budget is 24 candidates and 180 seconds per optimization, with at most two batch jobs and two encoder threads per job. Native raster operations and hashing are cancellation-checked between stages; an individual synchronous raster call cannot be interrupted midway. Encoder subprocesses have deadlines and cancellation cleanup.
 - Failed encoders/evaluators produce explicit errors. There are no preset-only acceptances, synthetic quality scores, network services, or mock compression paths.
 - Auto keeps a byte-identical original if no evaluated acceptable candidate is smaller. Its verification is `unchangedOriginal` and its score is absent. An explicitly forced format can be larger; sizes and negative savings remain accurate.
@@ -53,6 +53,21 @@ The UI launches the bundled `airu-cli` helper with typed arguments and decodes p
 - The cache key includes SHA-256 of source contents, standardized source path, all optimization options, engine schema, and toolchain fingerprint. Cached files are hashed, decoded, and checked against their manifest before reuse/export. Changing source contents invalidates previous results.
 - Exports default to `~/Desktop/Airu Compressed/`, use `name-comp.ext`, then `name-comp-2.ext`, and never overwrite originals. Directory locking, exclusive creation, Unicode normalization, and case folding handle collisions.
 - New encodes retain the color profile and normalized orientation, but do not copy EXIF/GPS/XMP metadata. The lossless JPEG path preserves original metadata; unchanged copies preserve all original bytes.
+
+## PNG modes
+
+```sh
+.build/debug/airu optimize image.png --format png --mode airy --tools Resources/Encoders --destination /tmp/airu
+.build/debug/airu optimize image.png --format png --mode superlight --tools Resources/Encoders --destination /tmp/airu
+```
+
+Airy applies OxiPNG level 3 directly to an unrotated PNG, retaining pixel data, alpha, and color-description chunks. Other inputs/orientations use the normalized full-resolution raster. Decoded pixels must match exactly; quality is also measured with SSIMULACRA2.
+
+Superlight first creates the lossless fallback, then adaptively searches pngquant's palette-quality scale, followed by OxiPNG. Its `--score` defaults to 80 and cannot be lower than 80. Scores and actual output sizes determine acceptance and selection; pngquant's own quality numbers are not SSIMULACRA2 scores. Source ICC/gamma interpretation is retained around palette quantization to avoid pngquant's default sRGB conversion. Transparent results must preserve alpha values exactly and pass comparisons on black and white. Palette probes that alter alpha are rejected. Some photographs exceed what 256 colors can represent at this threshold; these retain the verified lossless fallback. Auto always retains the original when no acceptable evaluated output is smaller.
+
+`OptimizationOptions.pngMode` and CLI `--mode airy|superlight` select the pipeline explicitly; the native UI forwards its selected mode. Mode and quality options are included in the cache key. Existing cache manifests without the new mode field are invalidated and prepared again. All tools are bundled; users install no dependencies.
+
+**Dependency licensing:** pngquant 3.0.3 includes libimagequant 4.2.2 and is offered under GPL-3.0-or-later with additional notices, or a commercial license. Its full COPYRIGHT/license text is bundled. Non-GPL/closed-source or App Store redistribution requires resolving the upstream commercial licensing terms; this implementation does not grant such a license. See [upstream licensing](https://pngquant.org/licensing.html) and [dependency details](Docs/DEPENDENCIES.md).
 
 ## Supported deployment and limits
 

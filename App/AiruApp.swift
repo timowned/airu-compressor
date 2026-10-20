@@ -17,6 +17,11 @@ import AiruUI
     private var window: NSWindow?
     private let model = CompressionViewModel()
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Set the running Dock tile explicitly, including launches from a rebuilt local bundle.
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
         installMenus()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 430),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],

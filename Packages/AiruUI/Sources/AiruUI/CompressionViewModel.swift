@@ -3,6 +3,11 @@ import AiruCore
 import Observation
 import UniformTypeIdentifiers
 
+public enum CompressionProfile: String, CaseIterable, Codable, Sendable {
+    case airy = "Airy", superlight = "Superlight"
+    public var minimumScore: Double { self == .airy ? 90 : 80 }
+}
+
 public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto", manual = "Manual" }
 
 @MainActor @Observable public final class ImageJobViewModel: Identifiable {
@@ -12,6 +17,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     public internal(set) var result: CompressionResult?
     public internal(set) var status: ProcessingStatus = .queued
     public internal(set) var progress: Double = 0
+    public internal(set) var requestedProfile: CompressionProfile
     public internal(set) var requestedFormat: OutputFormat
     public internal(set) var exportedURL: URL?
     public internal(set) var error: AiruError?
@@ -19,14 +25,23 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     var compressionRequested = false
     var followsDefaultFormat = true
     var generation = UUID()
+    var resetRevision = 0
     let sourceAccess: ScopedURL
     var destinationAccess: ScopedURL?
-    init(source: URL, format: OutputFormat) {
+    init(source: URL, format: OutputFormat, profile: CompressionProfile = .airy) {
+        requestedProfile = profile
         sourceURL = source; requestedFormat = format; sourceAccess = ScopedURL(source)
     }
     public var filename: String { sourceURL.lastPathComponent }
-    public var canUseJPEG: Bool { info?.hasAlpha == false }
+    public var revealURL: URL { exportedURL ?? sourceURL }
+    public var progressPercentage: Int {
+        guard progress.isFinite else { return 0 }
+        // Only a received, verified result can finish compression.
+        return min(result == nil ? 99 : 100, max(0, Int((min(1, max(0, progress)) * 100).rounded(.down))))
+    }
+    public var canUseJPEG: Bool { info?.hasTransparency == false }
     public var canExport: Bool { result != nil && [.ready, .completed, .failed].contains(status) }
+    public var canReset: Bool { result != nil && !isBusy }
     public var canCompress: Bool { info != nil && result == nil && [.ready, .failed, .cancelled].contains(status) }
     public var isBusy: Bool { [.queued, .analyzing, .optimizing, .exporting].contains(status) }
     public var outputFormatLabel: String {
@@ -38,6 +53,9 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
 @MainActor @Observable public final class CompressionViewModel {
     public var mode: ApplicationMode = .auto
     public private(set) var jobs: [ImageJobViewModel] = []
+    public private(set) var isPresentingImportAnalysis = false
+    private var importAnalysisTask: Task<Void, Never>?
+    public private(set) var defaultProfile: CompressionProfile = .airy
     public private(set) var defaultFormat: OutputFormat = .auto
     public var alert: AiruError?
     public let destinations: ExportDestinationManager
@@ -54,7 +72,10 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     public var hasReadyFiles: Bool { jobs.contains { $0.status != .completed && ($0.canCompress || $0.canExport) } }
     public var isCompressing: Bool { jobs.contains { $0.isBusy && ($0.compressionRequested || $0.status == .exporting) } }
     public var allCompleted: Bool { !jobs.isEmpty && jobs.allSatisfy { $0.status == .completed } }
-    public var canUseJPEG: Bool { !jobs.isEmpty && jobs.allSatisfy { $0.canUseJPEG } }
+    public var canUseJPEG: Bool {
+        let pending = jobs.filter { $0.status != .completed }
+        return !pending.isEmpty && pending.allSatisfy { $0.canUseJPEG }
+    }
     public var batchProgress: Double {
         jobs.isEmpty ? 0 : jobs.reduce(0) { $0 + ($1.status == .completed ? 1 : $1.progress) } / Double(jobs.count)
     }
@@ -63,14 +84,35 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
             (CGImageSourceCopyTypeIdentifiers() as? [String] ?? []).contains(type.identifier)
         }
     }
-    public func importFiles(_ urls: [URL]) {
+    public func importFiles(_ urls: [URL], showAnalysisScreen: Bool = false) {
         var identities = Set(jobs.map { $0.sourceURL.resolvingSymlinksInPath().standardizedFileURL.path })
+        var imported: [ImageJobViewModel] = []
         for url in urls where url.isFileURL {
             let source = url.standardizedFileURL
             guard identities.insert(source.resolvingSymlinksInPath().path).inserted else { continue }
-            jobs.append(ImageJobViewModel(source: source, format: defaultFormat))
+            imported.append(ImageJobViewModel(source: source, format: defaultFormat, profile: defaultProfile))
         }
+        jobs.insert(contentsOf: imported, at: 0)
+        if showAnalysisScreen && !imported.isEmpty { presentImportAnalysis(for: Set(imported.map(\.id))) }
         mode = .auto; schedule()
+    }
+    private func presentImportAnalysis(for ids: Set<UUID>) {
+        importAnalysisTask?.cancel()
+        isPresentingImportAnalysis = true
+        importAnalysisTask = Task { [weak self] in
+            do {
+                // Real metadata analysis runs concurrently; this only holds its presentation.
+                try await Task.sleep(for: .seconds(3))
+                guard let self else { return }
+                while self.jobs.contains(where: { ids.contains($0.id) && [.queued, .analyzing].contains($0.status) }) {
+                    try Task.checkCancellation()
+                    try await Task.sleep(for: .milliseconds(25))
+                }
+                try Task.checkCancellation()
+                self.isPresentingImportAnalysis = false
+                self.importAnalysisTask = nil
+            } catch { /* A later drop or shutdown owns presentation cleanup. */ }
+        }
     }
     public func browseFiles() {
         let panel = NSOpenPanel()
@@ -93,18 +135,40 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         job.followsDefaultFormat = false
         reprepare(job, format: format)
     }
+    public func reset(_ job: ImageJobViewModel) {
+        guard jobs.contains(where: { $0.id == job.id }), job.canReset else { return }
+        job.generation = UUID()
+        job.resetRevision += 1
+        job.result = nil; job.exportedURL = nil; job.error = nil; job.info = nil
+        job.progress = 0; job.compressionRequested = false
+        job.requestedFormat = defaultFormat; job.requestedProfile = defaultProfile
+        job.followsDefaultFormat = true
+        job.status = .queued
+        // Revalidate the original; compression still waits for another Airufy click.
+        schedule()
+    }
     public func setDefaultFormat(_ format: OutputFormat) {
         guard format != .jpeg || canUseJPEG else { return }
         defaultFormat = format
-        for job in jobs where job.followsDefaultFormat { reprepare(job, format: format) }
+        for job in jobs where job.followsDefaultFormat && job.status != .completed { reprepare(job, format: format) }
     }
-    private func reprepare(_ job: ImageJobViewModel, format: OutputFormat) {
-        guard job.requestedFormat != format || job.status == .failed || job.status == .cancelled else { return }
+    public func setDefaultProfile(_ profile: CompressionProfile) {
+        defaultProfile = profile
+        for job in jobs where job.status != .completed {
+            reprepare(job, format: job.requestedFormat, profile: profile)
+        }
+    }
+    private func reprepare(_ job: ImageJobViewModel, format: OutputFormat, profile: CompressionProfile? = nil) {
+        let profile = profile ?? job.requestedProfile
+        guard job.requestedProfile != profile || job.requestedFormat != format || job.status == .failed || job.status == .cancelled else { return }
         running[job.id]?.1.cancel(); exports[job.id]?.cancel()
         pendingExports.removeAll { $0 == job.id }
+        job.requestedProfile = profile
         job.compressionRequested = false
         job.generation = UUID(); job.requestedFormat = format; job.result = nil; job.error = nil
-        job.status = .queued; job.progress = 0; job.exportedURL = nil
+        // Changing options does not invalidate metadata already read from the original.
+        job.status = job.info == nil ? .queued : .ready
+        job.progress = 0; job.exportedURL = nil
         schedule()
     }
     public func retry(_ job: ImageJobViewModel) {
@@ -131,7 +195,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
                     try Task.checkCancellation()
                     guard self.contains(job, generation: token) else { return }
                     job.info = info
-                    if job.requestedFormat == .jpeg && info.hasAlpha {
+                    if job.requestedFormat == .jpeg && info.hasTransparency {
                         if job.followsDefaultFormat {
                             job.requestedFormat = .auto; job.followsDefaultFormat = false
                         } else {
@@ -144,7 +208,8 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
                         return
                     }
                     job.status = .optimizing
-                    let result = try await service.prepare(job.sourceURL, format: job.requestedFormat) { [weak self, weak job] update in
+                    let result = try await service.prepare(job.sourceURL, format: job.requestedFormat, minimumScore: job.requestedProfile.minimumScore,
+                                                           pngMode: job.requestedProfile == .superlight ? .superlight : .airy) { [weak self, weak job] update in
                         await self?.receive(update, job: job, generation: token)
                     }
                     try Task.checkCancellation()
@@ -164,7 +229,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         guard let job, contains(job, generation: generation) else { return }
         // ready is published only after its matching result is received, never with a stale size.
         if update.status != .ready { job.status = update.status }
-        job.progress = max(job.progress, update.fraction)
+        if update.fraction.isFinite { job.progress = max(job.progress, min(1, max(0, update.fraction))) }
     }
     public func export(_ job: ImageJobViewModel) {
         guard jobs.contains(where: { $0.id == job.id }), exports[job.id] == nil, !pendingExports.contains(job.id) else { return }
@@ -174,7 +239,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
             return
         }
         guard job.canExport else { return }
-        job.status = .exporting; job.progress = 0; job.error = nil
+        job.status = .exporting; job.progress = 1; job.error = nil
         pendingExports.append(job.id)
         scheduleExports()
     }
@@ -187,7 +252,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     private func startExport(_ job: ImageJobViewModel) {
         guard let result = job.result else { return }
         let token = job.generation
-        job.status = .exporting; job.progress = 0; job.error = nil
+        job.status = .exporting; job.progress = 1; job.error = nil
         let folder = job.destinationOverride ?? destinations.defaultURL
         let access = ScopedURL(folder)
         let service = service
@@ -211,7 +276,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
                 let error = AiruError.wrapping(error)
                 if error.code == "userCancelled" { job.status = .ready; return }
                 if ["cacheInvalid", "sourceChanged"].contains(error.code) { job.result = nil }
-                job.error = error; job.status = error.code == "cancelled" ? .cancelled : .failed; job.progress = 1
+                job.error = error; job.status = error.code == "cancelled" ? .cancelled : .failed
             }
         }
     }
@@ -230,16 +295,17 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         catch { alert = AiruError.wrapping(error) }
     }
     public func reveal(_ job: ImageJobViewModel) {
-        if let url = job.exportedURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        NSWorkspace.shared.activateFileViewerSelecting([job.revealURL])
     }
     public func revealExports() {
         let urls = jobs.compactMap(\.exportedURL)
         if !urls.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(urls) }
     }
     public func waitUntilIdle() async throws {
-        while !running.isEmpty || !exports.isEmpty || !pendingExports.isEmpty { try Task.checkCancellation(); try await Task.sleep(for: .milliseconds(25)) }
+        while !running.isEmpty || !exports.isEmpty || !pendingExports.isEmpty || importAnalysisTask != nil { try Task.checkCancellation(); try await Task.sleep(for: .milliseconds(25)) }
     }
     public func cancelAll() {
+        importAnalysisTask?.cancel(); importAnalysisTask = nil; isPresentingImportAnalysis = false
         // Prevent completion cleanup from scheduling queued work during shutdown.
         for job in jobs where job.status == .queued { job.status = .cancelled }
         for task in running.values { task.1.cancel() }

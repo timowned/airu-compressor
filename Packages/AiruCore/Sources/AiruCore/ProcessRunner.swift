@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 public enum EncoderTool: String, Codable, Sendable, CaseIterable {
-    case avifenc, avifdec, cwebp, dwebp, cjpeg, jpegtran, oxipng, ssimulacra2
+    case avifenc, avifdec, cwebp, dwebp, cjpeg, jpegtran, oxipng, ssimulacra2, pngquant
 }
 public struct Toolchain: Sendable {
     public let directory: URL

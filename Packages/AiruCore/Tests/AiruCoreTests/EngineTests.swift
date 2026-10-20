@@ -32,7 +32,116 @@ private struct Context: Sendable {
     }
 }
 
+private actor CapturedProgress {
+    private var updates: [ProgressUpdate] = []
+    func append(_ update: ProgressUpdate) { updates.append(update) }
+    func snapshot() -> [ProgressUpdate] { updates }
+}
+
 @Suite(.serialized) struct EngineTests {
+    @Test(arguments: ["photo.png", "transparent.png", "profile-p3.png", "palette-graphic.png", "palette-alpha.png"])
+    func pngAiryPreservesPixels(_ name: String) async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        let source = c.fixture(name)
+        let result = try await c.engine.prepare(source, options: c.options(.png))
+        try c.verify(result)
+        #expect(result.options.pngMode == .airy)
+        #expect(result.candidates.count == 1); #expect(result.candidates[0].lossless)
+        let original = try Raster.decode(source), output = try Raster.decode(result.cachedFileURL)
+        let space = original.colorSpace?.model == .rgb ? original.colorSpace : nil
+        let a = try Raster.rgba(original, colorSpace: space), b = try Raster.rgba(output, colorSpace: space)
+        #expect(a.dataProvider?.data as Data? == b.dataProvider?.data as Data?)
+        #expect(try ImageAnalyzer().analyze(result.cachedFileURL).colorProfileSHA256 == result.source.colorProfileSHA256)
+    }
+    @Test(arguments: ["photo.png", "transparent.png", "profile-p3.png", "palette-graphic.png", "palette-alpha.png"])
+    func pngSuperlightSearchesVerifiedPalette(_ name: String) async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        var options = c.options(.png, candidates: 10, score: 80)
+        options.pngMode = .superlight
+        let source = c.fixture(name)
+        let result = try await c.engine.prepare(source, options: options)
+        try c.verify(result)
+        #expect(result.candidates.count <= options.maxCandidates)
+        #expect(result.candidates.contains { $0.lossless })
+        if name != "transparent.png" {
+            #expect(result.candidates.contains { !$0.lossless && $0.quality != nil })
+            #expect(result.outputSize < result.source.fileSize)
+            #expect(result.outputSize <= result.candidates.first!.bytes)
+        }
+        if name.hasPrefix("palette-") {
+            #expect(result.outputSize < result.candidates.first!.bytes)
+            #expect(result.candidates.contains { !$0.lossless && $0.bytes == result.outputSize && $0.score >= 80 })
+        }
+        #expect(try Raster.alphaMatches(Raster.decode(source), Raster.decode(result.cachedFileURL)))
+        #expect(try ImageAnalyzer().analyze(result.cachedFileURL).colorProfileSHA256 == result.source.colorProfileSHA256)
+        let cached = try await c.engine.prepare(source, options: options)
+        #expect(cached.cacheKey == result.cacheKey)
+        var airy = options; airy.pngMode = .airy
+        let other = try await c.engine.prepare(source, options: airy)
+        #expect(other.cacheKey != result.cacheKey)
+        if name == "palette-graphic.png" {
+            // Palette PNGs expose their ICC profile through an indexed base color space.
+            let reimported = try await c.engine.prepare(result.cachedFileURL, options: airy)
+            #expect(reimported.source.colorProfileSHA256 == result.source.colorProfileSHA256)
+            #expect(reimported.perceptualScore == 100)
+        }
+        let exported = try await ExportManager(cache: c.cache).export(cacheKey: result.cacheKey, to: c.root.appendingPathComponent("export"))
+        #expect(try Files.size(exported) == result.outputSize)
+    }
+    @Test func pngSuperlightAutoNeverGrowsAndRejectsLowTarget() async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        var options = c.options(.auto, candidates: 12, score: 80); options.pngMode = .superlight
+        let result = try await c.engine.prepare(c.fixture("photo.png"), options: options)
+        #expect(result.outputSize <= result.source.fileSize)
+        #expect(result.candidates.contains { $0.format == .png && !$0.lossless })
+        let tiny = try await c.engine.prepare(c.fixture("tiny.png"), options: options)
+        #expect(tiny.outputSize <= tiny.source.fileSize)
+        options.minimumScore = 79
+        #expect(throws: AiruError.self) { try options.validate() }
+    }
+    @Test func pngColorMetadataRejectsTruncatedData() throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        let input = c.root.appendingPathComponent("broken.png")
+        try Data([137, 80, 78, 71, 13, 10, 26, 10, 255, 255, 255, 255, 73, 72, 68, 82]).write(to: input)
+        #expect(throws: AiruError.self) { try PNGColorMetadata.removingColor(from: input, to: c.root.appendingPathComponent("out.png")) }
+    }
+
+    @Test(arguments: [OutputFormat.avif, .webp, .jpeg, .png, .auto])
+    func opaqueAlphaChannelCanBeCompressed(_ format: OutputFormat) async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        let source = c.root.appendingPathComponent("opaque alpha screenshot.png")
+        let image = try Raster.rgba(Raster.decode(c.fixture("photo.png")), background: 1)
+        try Raster.writePNG(image, to: source)
+        let info = try ImageAnalyzer().analyze(source)
+        #expect(info.hasAlpha)
+        #expect(!info.hasTransparency)
+        let result = try await c.engine.prepare(source, options: c.options(format, candidates: 12))
+        if !result.alreadyOptimized { try c.verify(result) }
+        let exported = try await ExportManager(cache: c.cache).export(cacheKey: result.cacheKey, to: c.root.appendingPathComponent("exports"))
+        #expect(try Files.size(exported) == result.outputSize)
+        #expect(!(try ImageAnalyzer().analyze(exported)).hasTransparency)
+        let reused = try await c.engine.prepare(source, options: c.options(format, candidates: 12))
+        #expect(reused.outputSHA256 == result.outputSHA256)
+    }
+
+    @Test func progressTracksCompletedWorkAndEndsAtOne() async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        let log = CapturedProgress()
+        let result = try await c.engine.prepare(c.fixture("photo.png"), options: c.options(.png)) {
+            await log.append($0)
+        }
+        try c.verify(result)
+        let updates = await log.snapshot()
+        #expect(updates.first?.fraction == 0)
+        #expect(updates.first { $0.message == "Comparison images normalized" }?.fraction == 0)
+        #expect(updates.last?.status == .ready); #expect(updates.last?.fraction == 1)
+        #expect(updates.allSatisfy { $0.fraction.isFinite && (0...1).contains($0.fraction) })
+        #expect(zip(updates, updates.dropFirst()).allSatisfy { $0.fraction <= $1.fraction + 0.000001 })
+        #expect(updates.contains { $0.message.hasPrefix("Encoded ") })
+        #expect(updates.contains { $0.message.hasPrefix("Decoded ") })
+        #expect(updates.contains { $0.fraction >= 0.89 && $0.status == .optimizing })
+    }
+
     @Test func analyzeContentsAndCorruption() throws {
         let c = try Context(); defer { Files.remove(c.root) }
         let disguised = c.root.appendingPathComponent("not really a jpeg.jpg")

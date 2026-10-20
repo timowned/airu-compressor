@@ -18,7 +18,7 @@ Every record has `protocolVersion: 1`, `sequence` (starts at 1 for each CLI invo
 Example records (shortened fields here only):
 
 ```json
-{"protocolVersion":1,"sequence":1,"type":"progress","progress":{"status":"analyzing","fraction":0.02,"message":"Reading and validating image"}}
+{"protocolVersion":1,"sequence":1,"type":"progress","progress":{"status":"analyzing","fraction":0,"message":"Reading and validating image"}}
 {"protocolVersion":1,"sequence":2,"type":"error","error":{"code":"missingEncoder","message":"Required bundled executable is missing: ..."}}
 ```
 
@@ -33,7 +33,7 @@ airu export --key SHA256 [--cache DIR] [--destination DIR]
 airu doctor --tools DIR
 ```
 
-Options: `--format auto|avif|webp|jpeg|png` (`jpg` alias accepted), `--score 90`, `--candidates 24` (4...64), `--timeout 180` (1...3600 seconds), `--threads 2` (1...8), `--tools DIR`, `--cache DIR`, `--json`. Put `--` before filenames starting with option prefixes. CLI concurrency is 1...8. Analysis/export do not require an encoder directory.
+Options: `--mode airy|superlight` (default Airy), `--format auto|avif|webp|jpeg|png` (`jpg` alias accepted), `--score N` (90 for Airy, 80 for Superlight; Superlight minimum 80), `--candidates 24` (4...64), `--timeout 180` (1...3600 seconds), `--threads 2` (1...8), `--tools DIR`, `--cache DIR`, `--json`. Put `--` before filenames starting with option prefixes. CLI concurrency is 1...8. Analysis/export do not require an encoder directory.
 
 Tool location priority: `--tools`, `AIRU_ENCODER_DIR`, bundled `Resources/Encoders` next to the CLI/application. No global PATH resolution. Cache defaults to the user's `Library/Caches/Airu/v1`.
 
@@ -42,3 +42,5 @@ Exit status: 0 success, 1 validation/processing/export failure (also when any ba
 Important error codes include `unsupportedImage`, `decodeFailed`, `animatedImage`, `unsupportedColor`, `imageTooLarge`, `missingToolchain`, `missingEncoder`, `processFailed`, `timeout`, `qualityEvaluationFailed`, `qualityThresholdUnmet`, `comparisonImageTooSmall`, `alphaMismatch`, `dimensionMismatch`, `transparencyUnsupported`, `cacheInvalid`, `sourceChanged`, `authorizationRequired`, `invalidOptions`, `invalidCacheKey`, `notReady`, `cancelled`, `usage`, and `io`. Consumers should tolerate new codes and optional fields in future protocol-v1 releases.
 
 Job states: queued → analyzing → optimizing → ready → exporting → completed. Failures and cancellation are terminal for that job. `BatchSnapshot.isFinished` also treats ready as preparation-complete. The actor allows jobs to be added after a completed preparation wave. For a changed format, call `prepare` with new options or replace the batch job; the source/options cache key selects or generates the right artifact.
+
+PNG output uses OxiPNG alone in Airy and libimagequant/pngquant followed by OxiPNG in Superlight. `result.options.pngMode` carries the selected pipeline. Lossless PNG records have `lossless: true` and omit `quality`; palette records have `lossless: false` and a quantizer quality parameter. That parameter is not a perceptual score. Every recorded `score` is measured by SSIMULACRA2; rejected alpha-changing probes emit progress only. Mode is part of cache identity. The UI must pass `--mode` as well as `--score`; changing only the score does not enable palette quantization.

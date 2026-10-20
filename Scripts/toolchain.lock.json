@@ -327,6 +327,23 @@
       }
     },
     {
+      "name": "pngquant",
+      "version": "3.0.3",
+      "license": "GPL-3.0-or-later AND HPND AND BSD-2-Clause",
+      "source": {
+        "url": "https://static.crates.io/crates/pngquant/pngquant-3.0.3.crate",
+        "tag": null,
+        "revision": null,
+        "using": null,
+        "checksum": "68a12bdd8825f9989f4ee9a6ab0b42727dae57728b939ef63453366697a07232"
+      },
+      "bottle": {
+        "cellar": ":any",
+        "url": "https://ghcr.io/v2/homebrew/core/pngquant/blobs/sha256:0259ec8e4fb91d9ed9caace37c48aa47951834ed452cc0d0376c04143a7aa8d3",
+        "sha256": "0259ec8e4fb91d9ed9caace37c48aa47951834ed452cc0d0376c04143a7aa8d3"
+      }
+    },
+    {
       "name": "webp",
       "version": "1.6.0",
       "license": "BSD-3-Clause",

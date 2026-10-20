@@ -71,37 +71,44 @@ public struct CLIProcessBridge: Sendable {
         }
         defer { timer.cancel(); try? pipe.fileHandleForReading.close(); try? pipe.fileHandleForWriting.close() }
         try await withTaskCancellationHandler {
+            var readerTask: Task<Void, Never>?
             do {
                 try control.launch(process)
                 try pipe.fileHandleForWriting.close()
-                // Blocking pipe reads use a dedicated queue, never the main/cooperative executor.
-                DispatchQueue(label: "com.airu.cli.\(UUID())", qos: .userInitiated).async {
-                    do {
-                        var buffer = Data(), sequence = 0
-                        let decoder = JSONDecoder()
-                        var bytes = [UInt8](repeating: 0, count: 65536)
-                        while true {
-                            let count = Darwin.read(pipe.fileHandleForReading.fileDescriptor, &bytes, 65536)
-                            if count == 0 { break }
-                            if count < 0 {
-                                if errno == EINTR { continue }
-                                throw AiruError("io", "Could not read compression events")
-                            }
-                            buffer.append(contentsOf: bytes.prefix(count))
-                            guard buffer.count < 4_194_304 else { throw AiruError("invalidProtocol", "CLI event exceeds the maximum size") }
-                            while let end = buffer.firstIndex(of: 10) {
-                                let line = Data(buffer[..<end]); buffer.removeSubrange(...end)
-                                if line.isEmpty { continue }
-                                let event = try decoder.decode(CLIEvent.self, from: line)
-                                guard event.protocolVersion == 1, event.sequence == sequence + 1 else {
-                                    throw AiruError("invalidProtocol", "Unsupported or unordered compression event")
+                // Keep the descriptor alive until the queue has exited, including cancellation.
+                let descriptor = pipe.fileHandleForReading.fileDescriptor
+                readerTask = Task.detached {
+                    await withCheckedContinuation { (finished: CheckedContinuation<Void, Never>) in
+                        DispatchQueue(label: "com.airu.cli.\(UUID())", qos: .userInitiated).async {
+                            defer { finished.resume() }
+                            do {
+                                var buffer = Data(), sequence = 0
+                                let decoder = JSONDecoder()
+                                var bytes = [UInt8](repeating: 0, count: 65536)
+                                while true {
+                                    let count = Darwin.read(descriptor, &bytes, 65536)
+                                    if count == 0 { break }
+                                    if count < 0 {
+                                        if errno == EINTR { continue }
+                                        throw AiruError("io", "Could not read compression events")
+                                    }
+                                    buffer.append(contentsOf: bytes.prefix(count))
+                                    guard buffer.count < 4_194_304 else { throw AiruError("invalidProtocol", "CLI event exceeds the maximum size") }
+                                    while let end = buffer.firstIndex(of: 10) {
+                                        let line = Data(buffer[..<end]); buffer.removeSubrange(...end)
+                                        if line.isEmpty { continue }
+                                        let event = try decoder.decode(CLIEvent.self, from: line)
+                                        guard event.protocolVersion == 1, event.sequence == sequence + 1 else {
+                                            throw AiruError("invalidProtocol", "Unsupported or unordered compression event")
+                                        }
+                                        sequence = event.sequence; continuation.yield(event)
+                                    }
                                 }
-                                sequence = event.sequence; continuation.yield(event)
-                            }
+                                guard buffer.isEmpty else { throw AiruError("invalidProtocol", "Truncated compression event") }
+                                continuation.finish()
+                            } catch { continuation.finish(throwing: error) }
                         }
-                        guard buffer.isEmpty else { throw AiruError("invalidProtocol", "Truncated compression event") }
-                        continuation.finish()
-                    } catch { continuation.finish(throwing: error) }
+                    }
                 }
                 var reportedError: AiruError?
                 for try await event in events {
@@ -110,6 +117,7 @@ public struct CLIProcessBridge: Sendable {
                     await onEvent(event)
                 }
                 while process.isRunning { try await Task.sleep(for: .milliseconds(10)) }
+                await readerTask?.value
                 if control.timedOut { throw AiruError("timeout", "Image processing exceeded its time limit") }
                 try Task.checkCancellation()
                 if let reportedError { throw reportedError }
@@ -120,6 +128,7 @@ public struct CLIProcessBridge: Sendable {
             } catch {
                 control.stop()
                 await Task.detached { while process.isRunning { try? await Task.sleep(for: .milliseconds(20)) } }.value
+                await readerTask?.value
                 throw error
             }
         } onCancel: { control.stop() }
@@ -154,10 +163,10 @@ public struct CompressionService: Sendable {
         guard let info = await value.analysis else { throw AiruError("invalidProtocol", "The compression helper returned no image analysis") }
         return info
     }
-    public func prepare(_ source: URL, format: OutputFormat,
+    public func prepare(_ source: URL, format: OutputFormat, minimumScore: Double = 90, pngMode: PNGCompressionMode = .airy,
                         progress: @escaping ProgressHandler) async throws -> CompressionResult {
         let value = EventResult()
-        let arguments = ["prepare", source.path, "--format", format.rawValue] + cacheArguments + (tools.map { ["--tools", $0.path] } ?? [])
+        let arguments = ["prepare", source.path, "--format", format.rawValue, "--score", String(minimumScore), "--mode", pngMode.rawValue] + cacheArguments + (tools.map { ["--tools", $0.path] } ?? [])
         try await bridge.run(arguments) { event in
             await value.consume(event)
             if let update = event.progress { await progress(update) }

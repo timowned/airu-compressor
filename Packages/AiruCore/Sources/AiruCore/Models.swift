@@ -35,27 +35,36 @@ public struct ImageInfo: Codable, Sendable, Equatable {
     public let colorProfile: String?
     public let colorProfileSHA256: String?
     public let hasAlpha: Bool
+    /// Actual non-opaque pixels, distinct from an unused alpha channel.
+    public var containsTransparency: Bool? = nil
+    public var hasTransparency: Bool { containsTransparency ?? hasAlpha }
     public let orientation: Int
     public let bitsPerComponent: Int
     public let canDecode: Bool
     public let frameCount: Int
     public let contentSHA256: String
 }
+public enum PNGCompressionMode: String, Codable, Sendable, CaseIterable { case airy, superlight }
 public struct OptimizationOptions: Codable, Sendable, Equatable {
     public var format: OutputFormat
     public var minimumScore: Double
     public var maxCandidates: Int
     public var timeoutSeconds: Double
     public var encoderThreads: Int
+    public var pngMode: PNGCompressionMode
     public init(format: OutputFormat = .auto, minimumScore: Double = 90, maxCandidates: Int = 24,
-                timeoutSeconds: Double = 180, encoderThreads: Int = 2) {
+                timeoutSeconds: Double = 180, encoderThreads: Int = 2, pngMode: PNGCompressionMode = .airy) {
         self.format = format; self.minimumScore = minimumScore; self.maxCandidates = maxCandidates
         self.timeoutSeconds = timeoutSeconds; self.encoderThreads = encoderThreads
+        self.pngMode = pngMode
     }
     public func validate() throws {
         guard minimumScore.isFinite, (0...100).contains(minimumScore), (4...64).contains(maxCandidates),
               timeoutSeconds.isFinite, (1...3600).contains(timeoutSeconds), (1...8).contains(encoderThreads) else {
             throw AiruError("invalidOptions", "Score must be 0...100, candidates 4...64, timeout 1...3600, threads 1...8")
+        }
+        guard pngMode != .superlight || minimumScore >= 80 else {
+            throw AiruError("invalidOptions", "Superlight requires an SSIMULACRA2 target of at least 80")
         }
     }
 }

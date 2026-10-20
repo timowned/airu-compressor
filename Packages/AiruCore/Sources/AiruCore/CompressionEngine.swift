@@ -7,7 +7,7 @@ public struct CompressionEngine: Sendable {
     public func prepare(_ source: URL, options: OptimizationOptions = .init(), progress: ProgressHandler? = nil) async throws -> CompressionResult {
         try options.validate()
         try Task.checkCancellation()
-        await progress?(ProgressUpdate(.analyzing, 0.02, "Reading and validating image"))
+        await progress?(ProgressUpdate(.analyzing, 0, "Reading and validating image"))
         let info = try ImageAnalyzer().analyze(source)
         let key = try CompressionCache.key(source: info, options: options, toolchainFingerprint: tools.fingerprint())
         if let existing = try await cache.lookup(key) {
@@ -25,7 +25,7 @@ public struct CompressionEngine: Sendable {
         let work = Files.fm.temporaryDirectory.appendingPathComponent("airu-job-\(UUID())", isDirectory: true)
         try Files.directory(work)
         defer { Files.remove(work) }
-        await progress?(ProgressUpdate(.optimizing, 0.1, "Searching for the smallest verified output"))
+        await progress?(ProgressUpdate(.optimizing, 0, "Normalizing image for comparison"))
         let (best, records) = try await PerceptualCompressionOptimizer(tools: tools).optimize(info: info, options: options, workspace: work, progress: progress)
         try Task.checkCancellation()
         let unchanged = options.format == .auto && (best == nil || best!.record.bytes >= info.fileSize)

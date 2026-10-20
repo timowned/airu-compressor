@@ -8,7 +8,7 @@ public actor CompressionCache {
     public static func key(source: ImageInfo, options: OptimizationOptions, toolchainFingerprint: String) throws -> String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         var data = try encoder.encode(options)
-        data.append(contentsOf: "airu-engine-v1|\(source.sourceURL.path)|\(source.contentSHA256)|\(toolchainFingerprint)".utf8)
+        data.append(contentsOf: "airu-engine-v2|\(source.sourceURL.path)|\(source.contentSHA256)|\(toolchainFingerprint)".utf8)
         return Files.hash(data)
     }
     private func directory(_ key: String) throws -> URL {
@@ -40,7 +40,7 @@ public actor CompressionCache {
         }
         let info = try ImageAnalyzer().analyze(url)
         guard info.width == result.source.width, info.height == result.source.height, info.format == result.selectedFormat,
-              !result.source.hasAlpha || info.hasAlpha else { throw AiruError("cacheInvalid", "Cached image validation failed") }
+              !result.source.hasTransparency || info.hasTransparency else { throw AiruError("cacheInvalid", "Cached image validation failed") }
         guard (result.verification == .unchangedOriginal && result.outputSHA256 == result.source.contentSHA256) ||
               (result.verification == .ssimulacra2 && (result.perceptualScore ?? -.infinity) >= result.options.minimumScore) else {
             throw AiruError("cacheInvalid", "Cached result has no valid quality verification")

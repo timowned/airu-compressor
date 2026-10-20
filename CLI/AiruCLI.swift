@@ -15,6 +15,7 @@ private struct Arguments {
     init(_ args: [String]) throws {
         command = args.first ?? "help"
         var index = 1
+        var explicitScore = false
         while index < args.count {
             let arg = args[index]; index += 1
             func value() throws -> String {
@@ -26,7 +27,10 @@ private struct Arguments {
                 let raw = try value()
                 guard let f = OutputFormat(rawValue: raw == "jpg" ? "jpeg" : raw) else { throw AiruError("usage", "Invalid output format \(raw)") }
                 options.format = f
-            case "--score": guard let n = Double(try value()) else { throw AiruError("usage", "Invalid score") }; options.minimumScore = n
+            case "--mode":
+                guard let mode = PNGCompressionMode(rawValue: try value()) else { throw AiruError("usage", "Mode must be airy or superlight") }
+                options.pngMode = mode
+            case "--score": guard let n = Double(try value()) else { throw AiruError("usage", "Invalid score") }; options.minimumScore = n; explicitScore = true
             case "--candidates": guard let n = Int(try value()) else { throw AiruError("usage", "Invalid candidate count") }; options.maxCandidates = n
             case "--timeout": guard let n = Double(try value()) else { throw AiruError("usage", "Invalid timeout") }; options.timeoutSeconds = n
             case "--threads": guard let n = Int(try value()) else { throw AiruError("usage", "Invalid thread count") }; options.encoderThreads = n
@@ -43,6 +47,7 @@ private struct Arguments {
                 files.append(URL(fileURLWithPath: arg))
             }
         }
+        if options.pngMode == .superlight && !explicitScore { options.minimumScore = 80 }
     }
 }
 private struct Event: Codable, Sendable {
@@ -96,7 +101,8 @@ private actor Output {
             airu batch FILE... [--destination DIR] [--concurrency 2] [OPTIONS]
             airu export --key SHA256 [--cache DIR] [--destination DIR]
             airu doctor --tools DIR
-            OPTIONS: --tools DIR --cache DIR --score 90 --candidates 24 --timeout 180 --threads 2
+            OPTIONS: --tools DIR --cache DIR --mode airy|superlight --score N --candidates 24 --timeout 180 --threads 2
+            Airy: lossless PNG, score 90 for other formats. Superlight: palette PNG, score 80 (minimum).
             --json suppresses progress; terminal records remain one JSON object per line.
             Tools resolve only from --tools, AIRU_ENCODER_DIR or bundled Resources/Encoders.
             """)
