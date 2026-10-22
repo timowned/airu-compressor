@@ -18,11 +18,12 @@ import AiruUI
     private let model = CompressionViewModel()
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set the running Dock tile explicitly, including launches from a rebuilt local bundle.
-        let iconName = (Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") as? String ?? "AppIcon")
-            .replacingOccurrences(of: ".icns", with: "")
-        if let iconURL = Bundle.main.url(forResource: iconName, withExtension: "icns")
+        if let iconURL = Bundle.main.url(forResource: "AiruIcon", withExtension: "icns")
             ?? Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
+            // Keep the logical size consistent with macOS app icons while retaining
+            // every bitmap representation for Retina and Dock magnification.
+            icon.size = NSSize(width: 128, height: 128)
             NSApp.applicationIconImage = icon
         }
         installMenus()

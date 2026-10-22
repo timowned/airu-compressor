@@ -67,8 +67,13 @@ func runIconutil(_ arguments: [String]) throws {
 func verifyBundle(_ app: URL) throws {
     let info = try PropertyListSerialization.propertyList(from: Data(contentsOf: app.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any]
     guard info?["CFBundleIconName"] as? String == "AppIcon",
-          info?["CFBundleIconFile"] as? String == "AiruIcon" else {
-        throw IconError("App bundle must declare both the AppIcon asset and ICNS resource")
+          info?["CFBundleIconFile"] as? String == "AppIcon" else {
+        throw IconError("System surfaces must use Xcode's AppIcon asset and compatibility ICNS")
+    }
+    let systemIconURL = app.appendingPathComponent("Contents/Resources/AppIcon.icns")
+    guard let systemIcon = NSImage(contentsOf: systemIconURL),
+          systemIcon.size == NSSize(width: 128, height: 128) else {
+        throw IconError("System app icon must retain the standard 128-point logical canvas")
     }
     let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("airu-icon-check-\(UUID())")
     try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
@@ -81,7 +86,7 @@ func verifyBundle(_ app: URL) throws {
           Set([16, 32, 64, 128, 256, 512, 1024]).isSubset(of: Set(nativeImage.representations.map(\.pixelsWide))) else {
         throw IconError("AppKit could not load the complete icon family for system drawing")
     }
-    print("Verified packaged app icon: 10 standard/Retina representations, 16–1024px, declared bundle identity")
+    print("Verified app icons: standard 128pt system canvas; separate full-resolution Dock family with 10 representations, 16–1024px")
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
@@ -118,8 +123,8 @@ case "--package":
         try FileManager.default.copyItem(at: catalog.appendingPathComponent(slot.filename), to: temporary.appendingPathComponent(slot.filename))
     }
     let app = URL(fileURLWithPath: arguments[1], isDirectory: true)
-    // actool can emit a reduced compatibility ICNS. Keep the full family for system
-    // surfaces and the explicit running Dock icon loaded by AppDelegate.
+    // Keep the full family separate. Replacing actool's compatibility ICNS changes
+    // NSImage's logical canvas from 128pt to 512pt in system consumers.
     try runIconutil(["-c", "icns", temporary.path, "-o", app.appendingPathComponent("Contents/Resources/AiruIcon.icns").path])
     try verifyBundle(app)
 case "--verify":

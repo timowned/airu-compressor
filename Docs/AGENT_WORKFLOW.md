@@ -95,8 +95,10 @@ print(exported["destinationURL"])
 | `cacheInvalid`, `sourceChanged` | Analyze/prepare the current source again, then export its new cache key. |
 | `authorizationRequired` | Use a writable workflow destination; GUI users can select an authorized folder in Airu. |
 | `transparencyUnsupported` | Choose PNG, WebP, AVIF, or Auto; do not discard alpha. |
+| `codecDimensionLimit` | Choose Auto or PNG to retain the source dimensions; do not silently resize. |
+| `filenameTooLong` | Use a shorter destination path or filename. Airu already shortens the export stem when possible; folder authorization will not resolve a length limit. |
 | `qualityThresholdUnmet`, `qualityEvaluationFailed` | Report the failure. Do not silently lower the requested threshold or accept unverified output. |
-| `timeout` | Report exhausted work; retry only with a deliberately changed budget or workload. |
+| `timeout` | No acceptable candidate was verified within the budget. Report exhausted work; retry only with a deliberately changed budget or workload. If a candidate was already verified, Airu returns that result instead of failing. |
 | `unsupportedImage`, `decodeFailed`, `animatedImage`, `unsupportedColor`, `imageTooLarge` | Report the per-file limitation and continue other batch jobs. |
 | `cancelled` | Stop the workflow; exit 130 is expected. |
 

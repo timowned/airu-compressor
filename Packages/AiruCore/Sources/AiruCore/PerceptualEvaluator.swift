@@ -33,6 +33,7 @@ public struct PerceptualEvaluator: Sendable {
                 output = try await ProcessRunner().run(executable: executable, arguments: [reference.path, file.path],
                                                       timeout: deadline.timeIntervalSinceNow)
             } catch is CancellationError { throw CancellationError() }
+            catch let error as AiruError where error.code == "timeout" { throw error }
             catch { throw AiruError("qualityEvaluationFailed", AiruError.wrapping(error).message) }
             guard let score = Double(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines)), score.isFinite, score <= 100.0001 else {
                 throw AiruError("qualityEvaluationFailed", "SSIMULACRA2 returned an invalid score: \(output.stdout.prefix(200))")

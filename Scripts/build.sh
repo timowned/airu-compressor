@@ -14,8 +14,7 @@ mkdir -p dist
 ditto .build/xcode/Build/Products/Release/Airu.app dist/Airu.app
 ditto Resources/Encoders dist/Airu.app/Contents/Resources/Encoders
 cp "$airu_cli_bin/airu" dist/Airu.app/Contents/MacOS/airu-cli
-# actool's partial plist selects its compatibility ICNS; use our complete family.
-/usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AiruIcon" dist/Airu.app/Contents/Info.plist
+# Retain actool's system-facing AppIcon and package the full-resolution Dock family separately.
 swift Scripts/generate-icon.swift --package dist/Airu.app
 identity="${AIRU_SIGN_IDENTITY:--}"
 signing_options=(--options 0)

@@ -22,6 +22,18 @@ private struct Context: Sendable {
     func options(_ format: OutputFormat = .avif, candidates: Int = 6, score: Double = 90) -> OptimizationOptions {
         .init(format: format, minimumScore: score, maxCandidates: candidates, timeoutSeconds: 90, encoderThreads: 1)
     }
+    func widePhoto(width: Int, height: Int) throws -> URL {
+        let original = try Raster.decode(fixture("photo.png"))
+        let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        for x in stride(from: 0, to: width, by: 128) {
+            context.draw(original, in: CGRect(x: x, y: 0, width: 128, height: 85))
+        }
+        let url = root.appendingPathComponent("wide-\(width).png")
+        try Raster.writePNG(#require(context.makeImage()), to: url)
+        return url
+    }
     func verify(_ result: CompressionResult) throws {
         #expect(try Files.size(result.cachedFileURL) == result.outputSize)
         let info = try ImageAnalyzer().analyze(result.cachedFileURL)
@@ -39,6 +51,103 @@ private actor CapturedProgress {
 }
 
 @Suite(.serialized) struct EngineTests {
+    @Test(arguments: [16_400, 65_501])
+    func autoSkipsIncompatibleCodecDimensions(_ width: Int) async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        let source = try c.widePhoto(width: width, height: 16)
+        let result = try await c.engine.prepare(source, options: c.options(.auto, candidates: 4))
+        #expect(result.outputSize <= result.source.fileSize)
+        #expect(!result.candidates.contains { $0.format == .webp })
+        if width > 65_500 {
+            #expect(result.candidates.allSatisfy { $0.format == .png })
+        }
+        if !result.alreadyOptimized { try c.verify(result) }
+        let exported = try await ExportManager(cache: c.cache).export(cacheKey: result.cacheKey, to: c.root.appendingPathComponent("output"))
+        let decoded = try ImageAnalyzer().analyze(exported)
+        #expect(decoded.width == width && decoded.height == 16)
+        for format in [OutputFormat.webp, .avif, .jpeg] where width > (format.imageFormat!.encodingDimensionLimit ?? Int.max) {
+            do {
+                _ = try await c.engine.prepare(source, options: c.options(format))
+                Issue.record("Forced unsupported dimensions must fail before encoding")
+            } catch let error as AiruError { #expect(error.code == "codecDimensionLimit") }
+        }
+    }
+
+    @Test(arguments: ["Encoded avif candidate", "Decoded avif candidate for quality evaluation"])
+    func deadlineKeepsOnlyEarlierVerifiedCandidate(_ phase: String) async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        var options = c.options(.auto, candidates: 4)
+        options.timeoutSeconds = 3
+        let capture = CapturedProgress()
+        let result = try await c.engine.prepare(c.fixture("photo.png"), options: options) { update in
+            await capture.append(update)
+            if update.message == phase { try? await Task.sleep(for: .seconds(3)) }
+        }
+        try c.verify(result)
+        #expect(result.selectedFormat == .png)
+        #expect(result.candidates.count == 1 && result.perceptualScore == 100)
+        #expect(await capture.snapshot().contains { $0.message.contains("budget exhausted") })
+        let exported = try await ExportManager(cache: c.cache).export(cacheKey: result.cacheKey, to: c.root.appendingPathComponent("output"))
+        #expect(try Files.digest(exported) == result.outputSHA256)
+    }
+
+    @Test func deadlineWithoutVerifiedCandidateFails() async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        var options = c.options(.avif, candidates: 4)
+        options.timeoutSeconds = 3
+        do {
+            _ = try await c.engine.prepare(c.fixture("photo.png"), options: options) { update in
+                if update.message == "Encoded avif candidate" { try? await Task.sleep(for: .seconds(3)) }
+            }
+            Issue.record("An interrupted, unverified candidate cannot be accepted")
+        } catch let error as AiruError { #expect(error.code == "timeout") }
+    }
+
+    @Test func evaluatorFailureStillFailsAfterVerifiedCandidate() async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        let directory = c.root.appendingPathComponent("toolchain")
+        let bin = directory.appendingPathComponent("bin")
+        try Files.directory(bin)
+        for tool in EncoderTool.allCases {
+            try Files.fm.createSymbolicLink(at: bin.appendingPathComponent(tool.rawValue), withDestinationURL: c.tools.executable(tool))
+        }
+        let evaluator = bin.appendingPathComponent("ssimulacra2")
+        let engine = CompressionEngine(tools: Toolchain(directory: directory), cache: c.cache)
+        do {
+            _ = try await engine.prepare(c.fixture("photo.png"), options: c.options(.auto, candidates: 4)) { update in
+                if update.candidate?.format == .png {
+                    do {
+                        try Files.fm.removeItem(at: evaluator)
+                        try Files.fm.createSymbolicLink(at: evaluator, withDestinationURL: URL(fileURLWithPath: "/usr/bin/false"))
+                    } catch { Issue.record("Could not inject evaluator failure: \(error)") }
+                }
+            }
+            Issue.record("Evaluator failure must not be hidden by a previous successful candidate")
+        } catch let error as AiruError { #expect(error.code == "qualityEvaluationFailed") }
+    }
+
+    @Test(arguments: [String(repeating: "a", count: 250), String(repeating: "👩🏽‍💻", count: 35)])
+    func longFilenamesExportUniquelyWithoutSplittingUnicode(_ stem: String) async throws {
+        let c = try Context(); defer { Files.remove(c.root) }
+        let source = c.root.appendingPathComponent(stem + ".png")
+        try Files.fm.copyItem(at: c.fixture("photo.png"), to: source)
+        let result = try await c.engine.prepare(source, options: c.options(.png))
+        let exporter = ExportManager(cache: c.cache)
+        let folder = c.root.appendingPathComponent("output")
+        let first = try await exporter.export(cacheKey: result.cacheKey, to: folder)
+        let second = try await exporter.export(cacheKey: result.cacheKey, to: folder)
+        for (url, suffix) in [(first, "-comp.png"), (second, "-comp-2.png")] {
+            #expect(url.lastPathComponent.hasSuffix(suffix))
+            let retainedStem = String(url.lastPathComponent.dropLast(suffix.count))
+            #expect(!retainedStem.isEmpty && stem.hasPrefix(retainedStem))
+            #expect(Array(retainedStem).allSatisfy { $0 == stem.first! })
+            #expect(try Files.size(url) == result.outputSize)
+            #expect(try Files.digest(url) == result.outputSHA256)
+        }
+        #expect(first != second)
+        #expect(try Files.digest(source) == result.source.contentSHA256)
+    }
+
     @Test(arguments: ["photo.png", "transparent.png", "profile-p3.png", "palette-graphic.png", "palette-alpha.png"])
     func pngAiryPreservesPixels(_ name: String) async throws {
         let c = try Context(); defer { Files.remove(c.root) }

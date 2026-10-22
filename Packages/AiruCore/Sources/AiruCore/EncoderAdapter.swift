@@ -1,5 +1,17 @@
 import Foundation
 
+extension ImageFormat {
+    /// Limits of the bundled encode/decode pipeline, independent of the source pixel budget.
+    var encodingDimensionLimit: Int? {
+        switch self {
+        case .webp: 16_383
+        case .jpeg: 65_500
+        case .avif: 32_768 // avifdec's default --dimension-limit must also accept the output.
+        case .png, .heic: nil
+        }
+    }
+}
+
 public struct EncoderRequest: Sendable {
     public let format: ImageFormat
     public let quality: Int
