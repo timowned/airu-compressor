@@ -41,7 +41,16 @@ final class ScopedURL: @unchecked Sendable {
         panel.canChooseFiles = false; panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false; panel.canCreateDirectories = true
         panel.directoryURL = url ?? defaultURL
-        let response = await withCheckedContinuation { continuation in panel.begin { continuation.resume(returning: $0) } }
+        // Keep the chooser and its New Folder dialog in the owning window's
+        // modal focus chain so the name field receives keyboard input.
+        let owner = NSApp.mainWindow
+        let response = await withCheckedContinuation { continuation in
+            if let owner {
+                panel.beginSheetModal(for: owner) { continuation.resume(returning: $0) }
+            } else {
+                panel.begin { continuation.resume(returning: $0) }
+            }
+        }
         guard response == .OK, let selected = panel.url else { throw AiruError("userCancelled", "Folder selection cancelled") }
         return selected
     }

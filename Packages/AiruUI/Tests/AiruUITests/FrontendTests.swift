@@ -40,55 +40,34 @@ import UniformTypeIdentifiers
 }
 
 @MainActor @Suite(.serialized) struct FrontendTests {
-    @Test func largeThumbnailSpansThreeRowsAndStartsAtSmallImageCenter() {
-        let thumbnail = CGRect(x: 0, y: 15, width: 22, height: 22)
-        let layout = ThumbnailPreviewLayout(thumbnail: thumbnail, viewport: CGSize(width: 600, height: 255))
-        #expect(layout.frame.height == 140)
-        #expect(layout.frame.minY == 7)
-        #expect(layout.frame.maxY == 147)
-        #expect(layout.imageFrame(at: 0) == thumbnail)
-        #expect(layout.imageFrame(at: 1) == layout.frame)
-        let halfway = layout.imageFrame(at: 0.5)
-        #expect(halfway.width > 22 && halfway.width < 140)
-        #expect(halfway.midX == (thumbnail.midX + layout.frame.midX) / 2)
-        let bottom = ThumbnailPreviewLayout(thumbnail: CGRect(x: 0, y: 219, width: 22, height: 22),
-                                           viewport: CGSize(width: 600, height: 255))
-        #expect(bottom.frame.minY >= 6)
-        #expect(bottom.frame.maxY <= 249)
-        #expect(bottom.imageFrame(at: 0).midY == 230)
-    }
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["AIRU_RENDER_UI"] == "1", "Optional native preview render"))
-    func renderLargeThumbnailPreview() async throws {
-        let c = try Context(); defer { c.cleanup() }
-        let source = c.fixture("photo.jpg")
-        let job = ImageJobViewModel(source: source, format: .auto)
-        job.info = try ImageAnalyzer().analyze(source)
-        let image = try #require(await ImageThumbnailLoader.shared.image(at: source,
-            contentIdentity: job.info!.contentSHA256, maximumPixels: 512))
-        let layout = ThumbnailPreviewLayout(thumbnail: CGRect(x: 0, y: 15, width: 22, height: 22),
-                                           viewport: CGSize(width: 600, height: 255))
-        let content = ZStack(alignment: .topLeading) {
-            VStack(spacing: 0) {
-                ForEach(0..<5) { _ in
-                    Rectangle().fill(.white.opacity(0.1)).frame(height: 1)
-                    HStack {
-                        Text("photo.jpg").font(AiruStyle.text(13)).padding(.leading, 32)
-                        Spacer()
-                        Text("375KB").font(AiruStyle.text(13))
-                    }.foregroundStyle(.white).frame(height: 50)
-                }
+    @Test func trafficLightsStayAnchoredAfterNativeResizePass() async throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 430),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let container = TrafficLightContainer(frame: NSRect(x: 22, y: 394, width: 60, height: 14))
+        try #require(window.contentView).addSubview(container)
+        let kinds: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        for size in [NSSize(width: 900, height: 600), NSSize(width: 640, height: 430)] {
+            window.setContentSize(size)
+            container.layoutSubtreeIfNeeded()
+            // AppKit may adjust these frames after the container's layout completed.
+            for kind in kinds {
+                let button = try #require(window.standardWindowButton(kind))
+                button.setFrameOrigin(NSPoint(x: button.frame.minX + 8, y: 8))
             }
-            LargeThumbnailPreview(job: job, thumbnail: image, layout: layout, dismiss: {})
-                .modifier(ThumbnailPreviewTransform(progress: 1, layout: layout))
-                .position(x: layout.frame.midX, y: layout.frame.midY)
-        }.frame(width: 600, height: 255).padding(20).background(AiruStyle.background)
-        let renderer = ImageRenderer(content: content); renderer.scale = 2
-        let bitmap = try #require(renderer.cgImage)
-        let url = c.project.appendingPathComponent("Tests/Screenshots/thumbnail-preview.png")
-        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
-        CGImageDestinationAddImage(destination, bitmap, nil)
-        #expect(CGImageDestinationFinalize(destination))
+            try await Task.sleep(for: .milliseconds(30))
+            for (index, kind) in kinds.enumerated() {
+                let button = try #require(window.standardWindowButton(kind))
+                #expect(button.superview === container)
+                #expect(button.frame == NSRect(x: CGFloat(index) * 23, y: 0, width: 14, height: 14))
+                #expect(button.target != nil && button.action != nil)
+            }
+        }
     }
+
     @Test func thumbnailsAreSmallOrientedCachedAndInvalidateWithContent() async throws {
         let c = try Context(); defer { c.cleanup() }
         let source = try c.copy("photo.jpg", to: "preview image.jpg")

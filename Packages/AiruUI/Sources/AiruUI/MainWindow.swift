@@ -258,19 +258,44 @@ struct WindowTrafficLights: NSViewRepresentable {
     func updateNSView(_ nsView: TrafficLightContainer, context: Context) { nsView.needsLayout = true }
 }
 final class TrafficLightContainer: NSView {
+    private var positioning = false
+    private var refreshScheduled = false
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self)
         guard let window else { return }
+        for name in [NSWindow.didResizeNotification, NSWindow.didEndLiveResizeNotification,
+                     NSWindow.didChangeBackingPropertiesNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(schedulePositioning), name: name, object: window)
+        }
         for (index, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
             guard let button = window.standardWindowButton(kind) else { continue }
             button.removeFromSuperview(); addSubview(button)
             button.autoresizingMask = []
             button.setFrameOrigin(NSPoint(x: CGFloat(index) * 23, y: 0))
             button.setFrameSize(NSSize(width: 14, height: 14))
+            button.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(self, selector: #selector(schedulePositioning),
+                name: NSView.frameDidChangeNotification, object: button)
+        }
+    }
+    deinit { NotificationCenter.default.removeObserver(self) }
+    @objc private func schedulePositioning() {
+        guard !positioning, !refreshScheduled else { return }
+        refreshScheduled = true
+        // AppKit can reposition standard window buttons after SwiftUI has laid out
+        // their custom container. Restore them after that native resize pass finishes.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.refreshScheduled = false
+            self.needsLayout = true
+            self.layoutSubtreeIfNeeded()
         }
     }
     override func layout() {
         super.layout()
+        positioning = true
+        defer { positioning = false }
         for (index, button) in subviews.compactMap({ $0 as? NSButton }).enumerated() {
             button.frame = NSRect(x: CGFloat(index) * 23, y: 0, width: 14, height: 14)
         }

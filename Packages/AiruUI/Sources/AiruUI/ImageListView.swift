@@ -3,66 +3,27 @@ import AiruCore
 
 struct ImageListView: View {
     let model: CompressionViewModel
-    @State private var previewID: UUID?
-    @State private var previewThumbnail: CGImage?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    private var previewAnimation: Animation { reduceMotion ? .easeOut(duration: 0.12) : .timingCurve(0.22, 1, 0.36, 1, duration: 0.3) }
-    var body: some View {
-        list
-            .overlayPreferenceValue(ThumbnailAnchorKey.self) { anchors in
-                GeometryReader { proxy in
-                    ZStack(alignment: .topLeading) {
-                        if previewID != nil {
-                            Color.clear.contentShape(Rectangle()).onTapGesture { dismissPreview() }
-                        }
-                        if let id = previewID, let thumbnail = previewThumbnail,
-                           let anchor = anchors[id], let job = model.jobs.first(where: { $0.id == id }) {
-                            let layout = ThumbnailPreviewLayout(thumbnail: proxy[anchor], viewport: proxy.size)
-                            LargeThumbnailPreview(job: job, thumbnail: thumbnail, layout: layout, dismiss: dismissPreview)
-                                .id(id)
-                                .transition(reduceMotion ? .opacity : .modifier(
-                                    active: ThumbnailPreviewTransform(progress: 0, layout: layout),
-                                    identity: ThumbnailPreviewTransform(progress: 1, layout: layout)))
-                                .position(x: layout.frame.midX, y: layout.frame.midY)
-                                .zIndex(1)
-                        }
-                    }
-                }
-            }
-            .onExitCommand { dismissPreview() }
-            .onChange(of: model.jobs.map(\.id)) { _, _ in dismissPreview() }
-    }
-    @ViewBuilder private var list: some View {
+    @ViewBuilder var body: some View {
         if #available(macOS 15.0, *) {
-            FadingImageList(model: model, showPreview: showPreview, dismissPreview: dismissPreview)
+            FadingImageList(model: model)
         } else {
-            ScrollView { ImageListRows(model: model, showPreview: showPreview) }
+            ScrollView { ImageListRows(model: model) }
                 .scrollClipDisabled()
                 .mask(Rectangle().padding(.horizontal, -AiruStyle.inset))
                 .scrollIndicators(.visible)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
-    private func showPreview(_ id: UUID, _ image: CGImage) {
-        withAnimation(previewAnimation) {
-            previewThumbnail = image
-            previewID = previewID == id ? nil : id
-        }
-    }
-    private func dismissPreview() {
-        guard previewID != nil else { return }
-        withAnimation(previewAnimation) { previewID = nil }
-    }
+
 }
 
 private struct ImageListRows: View {
     let model: CompressionViewModel
-    let showPreview: (UUID, CGImage) -> Void
     var body: some View {
         LazyVStack(spacing: 0) {
             Rectangle().fill(.white.opacity(0.1)).frame(height: 1)
             ForEach(model.jobs) { job in
-                ImageRowView(job: job, model: model, showPreview: showPreview)
+                ImageRowView(job: job, model: model)
                 Rectangle().fill(.white.opacity(0.1)).frame(height: 1)
             }
         }
@@ -72,14 +33,12 @@ private struct ImageListRows: View {
 @available(macOS 15.0, *)
 private struct FadingImageList: View {
     let model: CompressionViewModel
-    let showPreview: (UUID, CGImage) -> Void
-    let dismissPreview: () -> Void
     @State private var position = ScrollPosition(y: 0)
     @State private var metrics = ListScrollMetrics()
     @State private var dragStart: CGFloat?
     var body: some View {
         ScrollView {
-            ImageListRows(model: model, showPreview: showPreview)
+            ImageListRows(model: model)
         }
         // Let horizontal transitions pass through the list's inset to the window edge.
         // Keep vertical scrolling contained above the footer and below the header.
@@ -96,8 +55,7 @@ private struct FadingImageList: View {
             ListScrollMetrics(offset: geometry.contentOffset.y + geometry.contentInsets.top,
                               contentHeight: geometry.contentSize.height,
                               viewportHeight: geometry.containerSize.height)
-        } action: { old, value in
-            if abs(old.offset - value.offset) > 0.5 { dismissPreview() }
+        } action: { _, value in
             metrics = value
         }
         .scrollIndicators(.hidden)
@@ -152,16 +110,14 @@ private struct ListScrollMetrics: Equatable {
 struct ImageRowView: View {
     @Bindable var job: ImageJobViewModel
     let model: CompressionViewModel
-    var showPreview: ((UUID, CGImage) -> Void)? = nil
     @State private var hovering = false
-    @State private var hoverEntryResolved = false
-    @State private var thumbnailIsPrimary = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focused: Bool
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var showError = false
     @State private var actionsSuppressed = false
     @State private var thumbnail: CGImage?
-    private var expanded: Bool { !actionsSuppressed && (hovering || focused) }
+    private var expanded: Bool { controlActiveState != .inactive && !actionsSuppressed && (hovering || focused) }
     private var actionsVisible: Bool { expanded && job.status != .exporting }
     var body: some View {
         interactiveRow
@@ -170,9 +126,8 @@ struct ImageRowView: View {
         .accessibilityValue(accessibilityStatus)
         .accessibilityAction(named: "Compress") { model.export(job) }
         .accessibilityAction(named: "Remove") { model.remove(job) }
-        .accessibilityAction(named: "Reveal in Finder") { model.reveal(job) }
+        .accessibilityAction(named: "Reveal in Finder", revealInFinder)
         .accessibilityAction(named: "Reset to original") { model.reset(job) }
-        .accessibilityAction(named: "Preview image") { openPreview() }
         .contextMenu {
             Button("Compress") { model.export(job) }.disabled(!job.canExport && !job.canCompress)
             Menu("Output format") {
@@ -184,8 +139,7 @@ struct ImageRowView: View {
             if job.destinationOverride != nil {
                 Button("Use default export folder") { job.destinationOverride = nil; job.destinationAccess = nil }
             }
-            Button("Preview image") { openPreview() }.disabled(thumbnail == nil)
-            Button("Reveal in Finder") { model.reveal(job) }
+            Button("Reveal in Finder", action: revealInFinder)
             if job.canReset { Button("Reset to original") { model.reset(job) } }
             if job.error != nil { Button("Show error…") { showError = true } }
             Divider()
@@ -201,32 +155,35 @@ struct ImageRowView: View {
         // Export can hide the actions without changing hover or keyboard focus.
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: actionsVisible)
         .contentShape(Rectangle())
-        // Keep image clicks available when entering on its column; other row hover reveals Remove.
         .onContinuousHover { phase in
             switch phase {
-            case .active(let point):
-                let slot = CGRect(x: 0, y: 0, width: 22, height: AiruStyle.rowHeight)
-                if !hoverEntryResolved {
-                    thumbnailIsPrimary = slot.contains(point)
-                    hoverEntryResolved = true
-                } else if !slot.contains(point) { thumbnailIsPrimary = false }
+            case .active:
+                guard controlActiveState != .inactive else { return }
                 hovering = true
             case .ended:
-                hovering = false; hoverEntryResolved = false; thumbnailIsPrimary = false
+                hovering = false
                 actionsSuppressed = false
             }
         }
-        .onChange(of: job.resetRevision) { _, _ in
-            actionsSuppressed = true
-            hovering = false
-            focused = false
+        .onChange(of: job.resetRevision) { _, _ in dismissActions() }
+        .onChange(of: controlActiveState) { _, state in
+            if state == .inactive { dismissActions() }
         }
         .onChange(of: focused) { _, value in
             if value { actionsSuppressed = false }
         }
         .focusable().focused($focused).focusEffectDisabled()
         .onKeyPress(.delete) { model.remove(job); return .handled }
-        .onKeyPress(.return) { model.reveal(job); return .handled }
+        .onKeyPress(.return) { revealInFinder(); return .handled }
+    }
+    private func dismissActions() {
+        actionsSuppressed = true
+        hovering = false
+        focused = false
+    }
+    private func revealInFinder() {
+        dismissActions()
+        model.reveal(job)
     }
     private func loadThumbnail() async {
         guard let identity = job.info?.contentSHA256 else { return }
@@ -237,12 +194,8 @@ struct ImageRowView: View {
     private var rowContent: some View {
         HStack(spacing: 10) {
             thumbnailSlot
-            Button(action: openPreview) {
-                Text(job.filename).font(AiruStyle.text(13, .light)).lineLimit(1).truncationMode(.middle)
-                    .frame(minWidth: 50, maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain).help("Click to preview \(job.filename)")
+            Text(job.filename).font(AiruStyle.text(13, .light)).lineLimit(1).truncationMode(.middle)
+                .frame(minWidth: 50, maxWidth: .infinity, alignment: .leading)
             HStack(spacing: 10) {
                 if let result = job.result {
                     Text(result.selectedFormat.label).font(AiruStyle.text(12))
@@ -264,7 +217,7 @@ struct ImageRowView: View {
                             .help("Reset to original file")
                             .accessibilityLabel("Reset \(job.filename) to original")
                         }
-                        rowAction("Show") { model.reveal(job) }
+                        rowAction("Show", action: revealInFinder)
                             .help(job.revealURL.path)
                             .accessibilityLabel("Show \(job.filename) in Finder")
                     }
@@ -276,26 +229,22 @@ struct ImageRowView: View {
     }
     private var thumbnailSlot: some View {
         ZStack {
-            if !expanded || thumbnailIsPrimary {
-                Button(action: openPreview) {
-                    Group {
-                        if let thumbnail {
-                            Image(decorative: thumbnail, scale: 2).resizable().scaledToFill()
-                        } else {
-                            AiruStyle.control.overlay {
-                                Image(systemName: "photo").font(.system(size: 10)).foregroundStyle(AiruStyle.muted)
-                            }
+            if !expanded {
+                Group {
+                    if let thumbnail {
+                        Image(decorative: thumbnail, scale: 2).resizable().scaledToFill()
+                    } else {
+                        AiruStyle.control.overlay {
+                            Image(systemName: "photo").font(.system(size: 10)).foregroundStyle(AiruStyle.muted)
                         }
                     }
-                    .frame(width: 22, height: 22)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
-                .buttonStyle(.plain)
-                .disabled(thumbnail == nil)
-                .accessibilityLabel("Preview \(job.filename)")
+                .frame(width: 22, height: 22)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .accessibilityHidden(true)
                 .transition(.opacity)
             }
-            if expanded && !thumbnailIsPrimary {
+            if expanded {
                 Button { model.remove(job) } label: {
                     Image(systemName: "xmark").font(.system(size: 9, weight: .regular)).foregroundStyle(Color(red: 1, green: 56/255, blue: 60/255))
                         .frame(width: 22, height: 22).background(Color(red: 76/255, green: 20/255, blue: 21/255), in: RoundedRectangle(cornerRadius: 5.5))
@@ -304,11 +253,6 @@ struct ImageRowView: View {
             }
         }
         .frame(width: 22, height: 22)
-        .anchorPreference(key: ThumbnailAnchorKey.self, value: .bounds) { [job.id: $0] }
-    }
-    private func openPreview() {
-        guard let thumbnail else { return }
-        showPreview?(job.id, thumbnail)
     }
     private func actionTransition(from edge: Edge) -> AnyTransition {
         reduceMotion ? .opacity.animation(.easeOut(duration: 0.12)) : .move(edge: edge).combined(with: .opacity)
