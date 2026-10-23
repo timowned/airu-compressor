@@ -13,6 +13,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
 @MainActor @Observable public final class ImageJobViewModel: Identifiable {
     public let id = UUID()
     public let sourceURL: URL
+    let importedFileSize: Int64?
     public internal(set) var info: ImageInfo?
     public internal(set) var result: CompressionResult?
     public internal(set) var status: ProcessingStatus = .queued
@@ -22,6 +23,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     public internal(set) var exportedURL: URL?
     public internal(set) var error: AiruError?
     public internal(set) var destinationOverride: URL?
+    var requestedResize: ResizeOptions?
     var compressionRequested = false
     var followsDefaultFormat = true
     var generation = UUID()
@@ -30,6 +32,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     var destinationAccess: ScopedURL?
     init(source: URL, format: OutputFormat, profile: CompressionProfile = .airy) {
         requestedProfile = profile
+        importedFileSize = (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
         sourceURL = source; requestedFormat = format; sourceAccess = ScopedURL(source)
     }
     public var filename: String { sourceURL.lastPathComponent }
@@ -40,7 +43,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         return min(result == nil ? 99 : 100, max(0, Int((min(1, max(0, progress)) * 100).rounded(.down))))
     }
     public var canUseJPEG: Bool { info?.hasTransparency == false }
-    public var canExport: Bool { result != nil && [.ready, .completed, .failed].contains(status) }
+    public var canExport: Bool { result != nil && [.ready, .completed, .failed, .cancelled].contains(status) }
     public var canReset: Bool { result != nil && !isBusy }
     public var canCompress: Bool { info != nil && result == nil && [.ready, .failed, .cancelled].contains(status) }
     public var isBusy: Bool { [.queued, .analyzing, .optimizing, .exporting].contains(status) }
@@ -57,6 +60,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     private var importAnalysisTask: Task<Void, Never>?
     public private(set) var defaultProfile: CompressionProfile = .airy
     public private(set) var defaultFormat: OutputFormat = .auto
+    public private(set) var defaultResize: ResizeOptions?
     public var alert: AiruError?
     public let destinations: ExportDestinationManager
     private let service: CompressionService
@@ -71,6 +75,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     public var isBusy: Bool { jobs.contains { $0.isBusy } }
     public var hasReadyFiles: Bool { jobs.contains { $0.status != .completed && ($0.canCompress || $0.canExport) } }
     public var isCompressing: Bool { jobs.contains { $0.isBusy && ($0.compressionRequested || $0.status == .exporting) } }
+    public var canResetAll: Bool { !isCompressing && jobs.contains { $0.canReset } }
     public var allCompleted: Bool { !jobs.isEmpty && jobs.allSatisfy { $0.status == .completed } }
     public var canUseJPEG: Bool {
         let pending = jobs.filter { $0.status != .completed }
@@ -90,7 +95,9 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         for url in urls where url.isFileURL {
             let source = url.standardizedFileURL
             guard identities.insert(source.resolvingSymlinksInPath().path).inserted else { continue }
-            imported.append(ImageJobViewModel(source: source, format: defaultFormat, profile: defaultProfile))
+            let job = ImageJobViewModel(source: source, format: defaultFormat, profile: defaultProfile)
+            job.requestedResize = defaultResize
+            imported.append(job)
         }
         jobs.insert(contentsOf: imported, at: 0)
         if showAnalysisScreen && !imported.isEmpty { presentImportAnalysis(for: Set(imported.map(\.id))) }
@@ -143,9 +150,26 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         job.progress = 0; job.compressionRequested = false
         job.requestedFormat = defaultFormat; job.requestedProfile = defaultProfile
         job.followsDefaultFormat = true
+        job.requestedResize = defaultResize
         job.status = .queued
         // Revalidate the original; compression still waits for another Airufy click.
         schedule()
+    }
+    public func resetAll() {
+        guard canResetAll else { return }
+        for job in jobs where job.canReset { reset(job) }
+    }
+    public func setDefaultResize(_ resize: ResizeOptions?) {
+        do {
+            try resize?.validate()
+            for job in jobs where job.status != .completed {
+                if let info = job.info { _ = try resize?.dimensions(width: info.width, height: info.height) }
+            }
+            defaultResize = resize
+            for job in jobs where job.status != .completed {
+                reprepare(job, format: job.requestedFormat, resize: .some(resize))
+            }
+        } catch { alert = AiruError.wrapping(error) }
     }
     public func setDefaultFormat(_ format: OutputFormat) {
         guard format != .jpeg || canUseJPEG else { return }
@@ -158,12 +182,14 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
             reprepare(job, format: job.requestedFormat, profile: profile)
         }
     }
-    private func reprepare(_ job: ImageJobViewModel, format: OutputFormat, profile: CompressionProfile? = nil) {
+    private func reprepare(_ job: ImageJobViewModel, format: OutputFormat, profile: CompressionProfile? = nil, resize: ResizeOptions?? = nil) {
+        let resize = resize ?? job.requestedResize
         let profile = profile ?? job.requestedProfile
-        guard job.requestedProfile != profile || job.requestedFormat != format || job.status == .failed || job.status == .cancelled else { return }
+        guard job.requestedResize != resize || job.requestedProfile != profile || job.requestedFormat != format || job.status == .failed || job.status == .cancelled else { return }
         running[job.id]?.1.cancel(); exports[job.id]?.cancel()
         pendingExports.removeAll { $0 == job.id }
         job.requestedProfile = profile
+        job.requestedResize = resize
         job.compressionRequested = false
         job.generation = UUID(); job.requestedFormat = format; job.result = nil; job.error = nil
         // Changing options does not invalidate metadata already read from the original.
@@ -209,7 +235,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
                     }
                     job.status = .optimizing
                     let result = try await service.prepare(job.sourceURL, format: job.requestedFormat, minimumScore: job.requestedProfile.minimumScore,
-                                                           pngMode: job.requestedProfile == .superlight ? .superlight : .airy) { [weak self, weak job] update in
+                                                           pngMode: job.requestedProfile == .superlight ? .superlight : .airy, resize: job.requestedResize) { [weak self, weak job] update in
                         await self?.receive(update, job: job, generation: token)
                     }
                     try Task.checkCancellation()

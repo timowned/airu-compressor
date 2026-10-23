@@ -9,6 +9,7 @@ struct FormatSelector: View {
     let profile: CompressionProfile
     var caption: String? = nil
     var compact = false
+    var resizeModel: CompressionViewModel? = nil
     let jpegAllowed: Bool
     var onPresentationChange: ((Bool) -> Void)? = nil
     let select: (OutputFormat) -> Void
@@ -45,7 +46,7 @@ struct FormatSelector: View {
             if !$0 { arrowHovered = false }
         }
         .accessibilityLabel(caption ?? "Output format").accessibilityValue("\(value.label), \(profile.rawValue)")
-        .background(FormatMenuAnchor(isPresented: $isPresented, value: value, profile: profile, jpegAllowed: jpegAllowed, select: select, selectProfile: selectProfile))
+        .background(FormatMenuAnchor(isPresented: $isPresented, value: value, profile: profile, resizeModel: resizeModel, jpegAllowed: jpegAllowed, select: select, selectProfile: selectProfile))
         .clipShape(RoundedRectangle(cornerRadius: compact ? 7 : 10))
         .onChange(of: isPresented) { _, presented in onPresentationChange?(presented) }
         .contextMenu { Button("Use Auto format") { select(.auto) } }
@@ -53,6 +54,7 @@ struct FormatSelector: View {
 }
 
 @MainActor @Observable final class FormatMenuState {
+    var resizeModel: CompressionViewModel?
     var value: OutputFormat
     var profile: CompressionProfile
     var jpegAllowed: Bool
@@ -68,8 +70,10 @@ struct FormatSelector: View {
 /// Four 60-point format choices with 2-point padding and a 10-point panel inset.
 struct FormatMenuContent: View {
     static let panelWidth: CGFloat = 276
+    static let resizePanelWidth: CGFloat = 293
     @Bindable var state: FormatMenuState
     let dismiss: () -> Void
+    @State private var alignmentPresented = false
     @Namespace private var selection
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var selectionAnimation: Animation? {
@@ -77,6 +81,7 @@ struct FormatMenuContent: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if let model = state.resizeModel { ResizeControls(model: model, alignmentPresented: $alignmentPresented) }
             VStack(alignment: .leading, spacing: 12) {
                 sectionLabel("Format", opacity: 0.7)
                 HStack(spacing: 0) {
@@ -114,9 +119,21 @@ struct FormatMenuContent: View {
                 .background(Color(white: 24/255), in: RoundedRectangle(cornerRadius: 8))
             }
         }
-        .padding(10).frame(width: Self.panelWidth, height: 156)
+        .padding(10).frame(width: state.resizeModel == nil ? Self.panelWidth : Self.resizePanelWidth, height: state.resizeModel == nil ? 156 : 230)
         .background(AiruStyle.control, in: RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(AiruStyle.controlBorder, lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            if alignmentPresented, let model = state.resizeModel {
+                ZStack(alignment: .topTrailing) {
+                    Color.clear.contentShape(Rectangle()).onTapGesture { alignmentPresented = false }
+                    CropAlignmentPicker(selected: model.defaultResize?.alignment ?? .center) { alignment in
+                        if let resize = model.defaultResize { model.setDefaultResize(resize.aligned(alignment)) }
+                        alignmentPresented = false
+                    }
+                    .padding(.top, 72).padding(.trailing, 10)
+                }
+            }
+        }
         .animation(selectionAnimation, value: state.value)
         .animation(selectionAnimation, value: state.profile)
         .preferredColorScheme(.dark).onExitCommand(perform: dismiss)
@@ -154,6 +171,7 @@ private struct FormatMenuAnchor: NSViewRepresentable {
     @Binding var isPresented: Bool
     let value: OutputFormat
     let profile: CompressionProfile
+    let resizeModel: CompressionViewModel?
     let jpegAllowed: Bool
     let select: (OutputFormat) -> Void
     let selectProfile: (CompressionProfile) -> Void
@@ -162,7 +180,7 @@ private struct FormatMenuAnchor: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {
         context.coordinator.dismissBinding = { isPresented = false }
         if isPresented {
-            context.coordinator.present(from: view, value: value, profile: profile, jpegAllowed: jpegAllowed, select: select, selectProfile: selectProfile)
+            context.coordinator.present(from: view, value: value, profile: profile, resizeModel: resizeModel, jpegAllowed: jpegAllowed, select: select, selectProfile: selectProfile)
         } else { context.coordinator.close() }
     }
     static func dismantleNSView(_ view: NSView, coordinator: Coordinator) { coordinator.close() }
@@ -174,17 +192,18 @@ private struct FormatMenuAnchor: NSViewRepresentable {
         private var localMonitor: Any?
         private var globalMonitor: Any?
         private var observers: [NSObjectProtocol] = []
-        func present(from anchor: NSView, value: OutputFormat, profile: CompressionProfile,
+        func present(from anchor: NSView, value: OutputFormat, profile: CompressionProfile, resizeModel: CompressionViewModel?,
                      jpegAllowed: Bool, select: @escaping (OutputFormat) -> Void,
                      selectProfile: @escaping (CompressionProfile) -> Void) {
             if let menuState {
+                menuState.resizeModel = resizeModel
                 menuState.value = value; menuState.profile = profile; menuState.jpegAllowed = jpegAllowed
                 menuState.select = select; menuState.selectProfile = selectProfile
                 return
             }
             guard let window = anchor.window else { return }
             let anchorRect = window.convertToScreen(anchor.convert(anchor.bounds, to: nil))
-            let panel = FormatPanel(contentRect: NSRect(x: anchorRect.minX, y: anchorRect.maxY + 10, width: FormatMenuContent.panelWidth, height: 156),
+            let panel = FormatPanel(contentRect: NSRect(x: anchorRect.minX, y: anchorRect.maxY + 10, width: resizeModel == nil ? FormatMenuContent.panelWidth : FormatMenuContent.resizePanelWidth, height: resizeModel == nil ? 156 : 230),
                                     styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.title = "Output format"; panel.isOpaque = false; panel.backgroundColor = .clear
             panel.hasShadow = false; panel.level = .popUpMenu; panel.hidesOnDeactivate = true
@@ -193,6 +212,7 @@ private struct FormatMenuAnchor: NSViewRepresentable {
             panel.cancel = dismiss
             let state = FormatMenuState(value: value, profile: profile, jpegAllowed: jpegAllowed,
                                         select: select, selectProfile: selectProfile)
+            state.resizeModel = resizeModel
             menuState = state
             let host = NSHostingView(rootView: FormatMenuContent(state: state, dismiss: dismiss))
             if #available(macOS 15.0, *) { host.safeAreaRegions = [] }

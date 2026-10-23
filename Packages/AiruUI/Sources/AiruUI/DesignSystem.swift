@@ -20,7 +20,7 @@ enum AiruStyle {
 
 struct AiruButtonStyle: ButtonStyle {
     var kind: Kind = .secondary
-    enum Kind { case primary, secondary, success, working }
+    enum Kind { case primary, secondary, success, working, destructive }
     func makeBody(configuration: Configuration) -> some View {
         AiruStyledButton(label: configuration.label, kind: kind, pressed: configuration.isPressed)
     }
@@ -53,7 +53,7 @@ private struct AiruStyledButton<Label: View>: View {
             .onHover { hovering = $0 }
     }
     private var foreground: Color {
-        switch kind { case .primary: .black; case .secondary: .white; case .success: AiruStyle.green; case .working: AiruStyle.yellow }
+        switch kind { case .primary: .black; case .secondary: .white; case .success: AiruStyle.green; case .working: AiruStyle.yellow; case .destructive: Color(red: 1, green: 56/255, blue: 60/255) }
     }
     private var background: Color {
         switch kind {
@@ -61,6 +61,7 @@ private struct AiruStyledButton<Label: View>: View {
         case .secondary: AiruStyle.control
         case .success: Color(red: 13/255, green: 43/255, blue: 9/255)
         case .working: Color(red: 46/255, green: 42/255, blue: 13/255)
+        case .destructive: Color(red: 76/255, green: 20/255, blue: 21/255)
         }
     }
 }

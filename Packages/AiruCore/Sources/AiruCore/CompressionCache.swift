@@ -8,7 +8,7 @@ public actor CompressionCache {
     public static func key(source: ImageInfo, options: OptimizationOptions, toolchainFingerprint: String) throws -> String {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         var data = try encoder.encode(options)
-        data.append(contentsOf: "airu-engine-v2|\(source.sourceURL.path)|\(source.contentSHA256)|\(toolchainFingerprint)".utf8)
+        data.append(contentsOf: "airu-engine-v3|\(source.sourceURL.path)|\(source.contentSHA256)|\(toolchainFingerprint)".utf8)
         return Files.hash(data)
     }
     private func directory(_ key: String) throws -> URL {
@@ -39,15 +39,16 @@ public actor CompressionCache {
             throw AiruError("sourceChanged", "Source changed after preparation")
         }
         let info = try ImageAnalyzer().analyze(url)
-        guard info.width == result.source.width, info.height == result.source.height, info.format == result.selectedFormat,
-              !result.source.hasTransparency || info.hasTransparency else { throw AiruError("cacheInvalid", "Cached image validation failed") }
+        let target = try result.options.resize?.dimensions(width: result.source.width, height: result.source.height)
+        guard info.width == (target?.width ?? result.source.width), info.height == (target?.height ?? result.source.height), info.format == result.selectedFormat,
+              !(result.referenceHasTransparency ?? result.source.hasTransparency) || info.hasTransparency else { throw AiruError("cacheInvalid", "Cached image validation failed") }
         guard (result.verification == .unchangedOriginal && result.outputSHA256 == result.source.contentSHA256) ||
               (result.verification == .ssimulacra2 && (result.perceptualScore ?? -.infinity) >= result.options.minimumScore) else {
             throw AiruError("cacheInvalid", "Cached result has no valid quality verification")
         }
     }
     func store(key: String, info: ImageInfo, options: OptimizationOptions, candidate: OptimizedCandidate?,
-               records: [CandidateRecord], original: Bool) throws -> CompressionResult {
+               records: [CandidateRecord], original: Bool, referenceHasTransparency: Bool? = nil) throws -> CompressionResult {
         if let existing = try lookup(key) { return existing }
         let final = try directory(key)
         try Files.directory(root)
@@ -63,7 +64,7 @@ public actor CompressionCache {
             outputSize: try Files.size(file), perceptualScore: original ? nil : candidate!.record.score,
             verification: original ? .unchangedOriginal : .ssimulacra2, alreadyOptimized: original,
             cachedFileURL: final.appendingPathComponent(file.lastPathComponent), outputSHA256: try Files.digest(file), candidates: records,
-            savingsPercentage: 100 * (1 - Double(try Files.size(file)) / Double(max(1, info.fileSize))))
+            savingsPercentage: 100 * (1 - Double(try Files.size(file)) / Double(max(1, info.fileSize))), referenceHasTransparency: referenceHasTransparency)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(result).write(to: staging.appendingPathComponent("result.json"), options: .atomic)
         do { try Files.fm.moveItem(at: staging, to: final) }

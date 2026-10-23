@@ -163,10 +163,16 @@ public struct CompressionService: Sendable {
         guard let info = await value.analysis else { throw AiruError("invalidProtocol", "The compression helper returned no image analysis") }
         return info
     }
-    public func prepare(_ source: URL, format: OutputFormat, minimumScore: Double = 90, pngMode: PNGCompressionMode = .airy,
+    public func prepare(_ source: URL, format: OutputFormat, minimumScore: Double = 90, pngMode: PNGCompressionMode = .airy, resize: ResizeOptions? = nil,
                         progress: @escaping ProgressHandler) async throws -> CompressionResult {
         let value = EventResult()
-        let arguments = ["prepare", source.path, "--format", format.rawValue, "--score", String(minimumScore), "--mode", pngMode.rawValue] + cacheArguments + (tools.map { ["--tools", $0.path] } ?? [])
+        let resizeArguments: [String]
+        switch resize {
+        case .scale(let percent): resizeArguments = ["--scale", String(percent)]
+        case .resolution(let width, let height, let alignment): resizeArguments = ["--width", String(width), "--height", String(height), "--alignment", alignment.rawValue]
+        case nil: resizeArguments = []
+        }
+        let arguments = ["prepare", source.path, "--format", format.rawValue, "--score", String(minimumScore), "--mode", pngMode.rawValue] + resizeArguments + cacheArguments + (tools.map { ["--tools", $0.path] } ?? [])
         try await bridge.run(arguments) { event in
             await value.consume(event)
             if let update = event.progress { await progress(update) }

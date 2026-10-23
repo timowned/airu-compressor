@@ -51,6 +51,7 @@ public struct OptimizationOptions: Codable, Sendable, Equatable {
     public var maxCandidates: Int
     public var timeoutSeconds: Double
     public var encoderThreads: Int
+    public var resize: ResizeOptions? = nil
     public var pngMode: PNGCompressionMode
     public init(format: OutputFormat = .auto, minimumScore: Double = 90, maxCandidates: Int = 24,
                 timeoutSeconds: Double = 180, encoderThreads: Int = 2, pngMode: PNGCompressionMode = .airy) {
@@ -59,6 +60,7 @@ public struct OptimizationOptions: Codable, Sendable, Equatable {
         self.pngMode = pngMode
     }
     public func validate() throws {
+        try resize?.validate()
         guard minimumScore.isFinite, (0...100).contains(minimumScore), (4...64).contains(maxCandidates),
               timeoutSeconds.isFinite, (1...3600).contains(timeoutSeconds), (1...8).contains(encoderThreads) else {
             throw AiruError("invalidOptions", "Score must be 0...100, candidates 4...64, timeout 1...3600, threads 1...8")
@@ -89,6 +91,7 @@ public struct CompressionResult: Codable, Sendable {
     public let outputSHA256: String
     public let candidates: [CandidateRecord]
     public let savingsPercentage: Double
+    public var referenceHasTransparency: Bool? = nil
 }
 public struct CompressionJob: Codable, Sendable, Identifiable {
     public let id: UUID

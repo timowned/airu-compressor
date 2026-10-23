@@ -14,6 +14,9 @@ private struct Arguments {
     var json = false
     var requestID: String?
     var help = false
+    private var alignment: CropAlignment = .center
+    private var resizeWidth: Int?
+    private var resizeHeight: Int?
     private var suppliedOptions: Set<String> = []
     init(_ args: [String]) throws {
         command = args.first ?? "help"
@@ -38,6 +41,15 @@ private struct Arguments {
             case "--mode":
                 guard let mode = PNGCompressionMode(rawValue: try value()) else { throw AiruError("usage", "Mode must be airy or superlight") }
                 options.pngMode = mode
+            case "--alignment":
+                guard let value = CropAlignment(rawValue: try value()) else { throw AiruError("usage", "Invalid crop alignment") }
+                alignment = value
+            case "--scale":
+                guard let percent = Double(try value()) else { throw AiruError("usage", "Invalid scale") }
+                options.resize = .scale(percent)
+            case "--width", "--height":
+                guard let pixels = Int(try value()) else { throw AiruError("usage", "Invalid resolution") }
+                if arg == "--width" { resizeWidth = pixels } else { resizeHeight = pixels }
             case "--score": guard let n = Double(try value()) else { throw AiruError("usage", "Invalid score") }; options.minimumScore = n; explicitScore = true
             case "--candidates": guard let n = Int(try value()) else { throw AiruError("usage", "Invalid candidate count") }; options.maxCandidates = n
             case "--timeout": guard let n = Double(try value()) else { throw AiruError("usage", "Invalid timeout") }; options.timeoutSeconds = n
@@ -56,6 +68,15 @@ private struct Arguments {
                 guard !arg.hasPrefix("--") else { throw AiruError("usage", "Unknown option \(arg)") }
                 files.append(URL(fileURLWithPath: arg))
             }
+        }
+        if resizeWidth != nil || resizeHeight != nil {
+            guard let width = resizeWidth, let height = resizeHeight, !suppliedOptions.contains("--scale") else {
+                throw AiruError("usage", "Supply both --width and --height, or --scale, exclusively")
+            }
+            options.resize = .resolution(width: width, height: height, alignment: alignment)
+        }
+        if suppliedOptions.contains("--alignment"), resizeWidth == nil {
+            throw AiruError("usage", "--alignment requires custom --width and --height")
         }
         if options.pngMode == .superlight && !explicitScore { options.minimumScore = 80 }
     }
@@ -157,6 +178,7 @@ private actor Output {
             airu batch FILE... [--destination DIR] [--concurrency 2] [OPTIONS]
             airu export --key SHA256 [--cache DIR] [--destination DIR]
             airu doctor --tools DIR
+            RESIZE: --scale PERCENT or --width PIXELS --height PIXELS (aspect-fill crop; --alignment defaults to center)
             OPTIONS: --tools DIR --cache DIR --mode airy|superlight --score N --candidates 24 --timeout 180 --threads 2
             Airy: lossless PNG, score 90 for other formats. Superlight: palette PNG, score 80 (minimum).
             --json suppresses progress; terminal records remain one JSON object per line.

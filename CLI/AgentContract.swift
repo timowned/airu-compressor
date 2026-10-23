@@ -12,7 +12,7 @@ struct CommandContract: Codable, Sendable {
     let terminalEvents: [String]
     let writes: [String]
 
-    static let processingOptions = ["--format", "--mode", "--score", "--candidates", "--timeout", "--threads"]
+    static let processingOptions = ["--alignment", "--scale", "--width", "--height", "--format", "--mode", "--score", "--candidates", "--timeout", "--threads"]
     static let all: [Self] = [
         .init(name: "capabilities", summary: "Discover commands without tools or image access", minimumFiles: 0, maximumFiles: 0,
               options: [], requiredOptions: [], terminalEvents: ["capabilities"], writes: []),
@@ -64,6 +64,10 @@ struct AgentCapabilities: Encodable, Sendable {
         .init(name: "--help", valueType: "flag", summary: "Show human-readable help without processing"),
         .init(name: "--format", valueType: "enum", allowedValues: OutputFormat.allCases.map(\.rawValue) + ["jpg"], defaultValue: "auto", summary: "Auto never selects a larger output; forced formats may be larger"),
         .init(name: "--mode", valueType: "enum", allowedValues: PNGCompressionMode.allCases.map(\.rawValue), defaultValue: "airy", summary: "Airy uses lossless PNG; Superlight uses palette PNG with score >=80"),
+        .init(name: "--alignment", valueType: "enum", allowedValues: CropAlignment.allCases.map(\.rawValue), defaultValue: "center", summary: "Crop anchor; requires exact width and height"),
+        .init(name: "--scale", valueType: "number", defaultValue: "100", minimum: 0, maximum: 10000, summary: "Positive percentage of each oriented original; exclusive with exact resolution"),
+        .init(name: "--width", valueType: "integer", minimum: 1, maximum: 65500, summary: "Exact centered aspect-fill width; requires --height; maximum 100 megapixels"),
+        .init(name: "--height", valueType: "integer", minimum: 1, maximum: 65500, summary: "Exact centered aspect-fill height; requires --width"),
         .init(name: "--score", valueType: "number", defaultValue: "90 (Airy), 80 (Superlight)", minimum: 0, maximum: 100, summary: "SSIMULACRA2 minimum; Superlight minimum is 80"),
         .init(name: "--candidates", valueType: "integer", defaultValue: "24", minimum: 4, maximum: 64, summary: "Maximum evaluated candidates per file"),
         .init(name: "--timeout", valueType: "number", defaultValue: "180", minimum: 1, maximum: 3600, summary: "Per-file optimization budget in seconds; allow extra time for analysis, hashing and export"),

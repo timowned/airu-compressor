@@ -17,24 +17,25 @@ public struct MainWindow: View {
                         .font(AiruStyle.text(16, .medium)).foregroundStyle(AiruStyle.muted)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if model.isPresentingImportAnalysis {
-                    ImportAnalysisView().padding(AiruStyle.inset)
+                    ImportAnalysisView()
+                        .padding([.horizontal, .bottom], AiruStyle.inset).padding(.top, 16)
                 } else if model.jobs.isEmpty {
                     DropZoneView(isTargeted: isDropTarget, browse: model.browseFiles)
                         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTarget, perform: acceptDrop)
-                        .padding(AiruStyle.inset)
+                        .padding([.horizontal, .bottom], AiruStyle.inset).padding(.top, 16)
                 } else {
                     VStack(spacing: 10) {
                         ImageListView(model: model)
                         footer
                     }
-                    .padding(AiruStyle.inset)
+                    .padding([.horizontal, .bottom], AiruStyle.inset).padding(.top, 16)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if isDropTarget {
                             DropZoneGlow()
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.white.opacity(0.35), style: StrokeStyle(lineWidth: 1.5, dash: [10, 10])))
-                                .padding(20).allowsHitTesting(false)
+                                .padding([.horizontal, .bottom], AiruStyle.inset).padding(.top, 16).allowsHitTesting(false)
                                 .transition(.opacity)
                         }
                     }
@@ -75,7 +76,6 @@ public struct MainWindow: View {
             .padding(4).airuLiquidGlass()
             .offset(y: 5)
             HStack {
-                WindowTrafficLights().frame(width: 60, height: 14)
                 Spacer()
                 if !model.jobs.isEmpty && !model.isPresentingImportAnalysis {
                     Button(action: model.browseFiles) {
@@ -88,6 +88,11 @@ public struct MainWindow: View {
                 }
             }.padding(.horizontal, 22)
         }
+        .frame(height: AiruStyle.headerHeight)
+        .overlay(alignment: .topLeading) {
+            WindowTrafficLights().frame(width: 60, height: 14)
+                .padding(.top, 22).padding(.leading, 22)
+        }
     }
     private var footer: some View {
         HStack(alignment: .bottom, spacing: 12) {
@@ -98,13 +103,31 @@ public struct MainWindow: View {
                     .accessibilityHidden(formatMenuPresented)
                     .animation(.easeInOut(duration: 0.16), value: formatMenuPresented)
                 FormatSelector(value: model.defaultFormat, profile: model.defaultProfile,
-                               caption: "Default output format", jpegAllowed: model.canUseJPEG,
+                               caption: "Default output format", resizeModel: model, jpegAllowed: model.canUseJPEG,
                                onPresentationChange: { formatMenuPresented = $0 },
                                select: model.setDefaultFormat, selectProfile: model.setDefaultProfile)
                     .accessibilityIdentifier("default-format")
             }
             DestinationPicker(url: model.destinations.defaultURL) { Task { await model.chooseDestination() } }
             Spacer(minLength: 0)
+            if model.isCompressing {
+                Button("Stop", action: model.cancelAll)
+                    .buttonStyle(AiruButtonStyle(kind: .destructive))
+                    .help("Stop current compression")
+                    .accessibilityLabel("Stop compression")
+                    .accessibilityIdentifier("stop-compression")
+            }
+            if model.canResetAll {
+                Button(action: model.resetAll) {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 16)
+                }
+                .buttonStyle(AiruButtonStyle(kind: .secondary))
+                .help("Reset all processed images to their originals")
+                .accessibilityLabel("Reset All")
+                .accessibilityIdentifier("reset-all")
+            }
             Button(action: model.exportAll) {
                 HStack(spacing: 5) {
                     if model.isCompressing { AiruSpinner(button: true) }

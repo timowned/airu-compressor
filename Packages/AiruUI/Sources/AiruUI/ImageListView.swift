@@ -17,15 +17,26 @@ struct ImageListView: View {
 
 }
 
+private struct StatusColumnWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct ImageListRows: View {
     let model: CompressionViewModel
+    @State private var statusColumnWidth: CGFloat?
     var body: some View {
         LazyVStack(spacing: 0) {
             Rectangle().fill(.white.opacity(0.1)).frame(height: 1)
             ForEach(model.jobs) { job in
-                ImageRowView(job: job, model: model)
+                ImageRowView(job: job, model: model, statusColumnWidth: statusColumnWidth)
                 Rectangle().fill(.white.opacity(0.1)).frame(height: 1)
             }
+        }
+        .onPreferenceChange(StatusColumnWidthKey.self) { width in
+            statusColumnWidth = width > 0 ? width : nil
         }
     }
 }
@@ -110,6 +121,7 @@ private struct ListScrollMetrics: Equatable {
 struct ImageRowView: View {
     @Bindable var job: ImageJobViewModel
     let model: CompressionViewModel
+    var statusColumnWidth: CGFloat? = nil
     @State private var hovering = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focused: Bool
@@ -150,6 +162,12 @@ struct ImageRowView: View {
     private var interactiveRow: some View {
         rowContent
         .frame(height: AiruStyle.rowHeight)
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.white.opacity(hovering && controlActiveState != .inactive ? 0.02 : 0))
+                .padding(.horizontal, -AiruStyle.inset)
+                .allowsHitTesting(false)
+        }
         .task(id: job.info?.contentSHA256) { await loadThumbnail() }
         .animation(reduceMotion ? nil : .smooth(duration: 0.28), value: expanded)
         // Export can hide the actions without changing hover or keyboard focus.
@@ -202,10 +220,18 @@ struct ImageRowView: View {
                         .foregroundStyle(.white.opacity(0.8))
                         .padding(.horizontal, 10).frame(height: 26)
                         .background(AiruStyle.control, in: RoundedRectangle(cornerRadius: 8))
+                        .frame(width: 60, alignment: .leading)
                         .padding(.trailing, 22)
                         .accessibilityLabel("Converted to \(result.selectedFormat.label)")
                 }
                 status
+                    .fixedSize(horizontal: true, vertical: false)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(key: StatusColumnWidthKey.self, value: geometry.size.width)
+                        }
+                    }
+                    .frame(width: statusColumnWidth, alignment: .trailing)
                 if actionsVisible {
                     HStack(spacing: 10) {
                         if job.canReset {
@@ -262,10 +288,15 @@ struct ImageRowView: View {
         case .queued:
             Text(job.compressionRequested ? "0%" : "In queue")
                 .font(AiruStyle.text()).foregroundStyle(job.compressionRequested ? AiruStyle.yellow : AiruStyle.muted)
+        case .analyzing where !job.compressionRequested:
+            if let bytes = job.info?.fileSize ?? job.importedFileSize {
+                Text(FileSizeText.format(bytes)).font(AiruStyle.text(13, .light))
+                    .foregroundStyle(AiruStyle.muted)
+            }
         case .analyzing, .optimizing:
             HStack(spacing: 5) {
                 AiruSpinner()
-                Text(job.status == .analyzing && !job.compressionRequested ? "Analyzing" : "\(job.progressPercentage)%")
+                Text("\(job.progressPercentage)%")
                     .font(AiruStyle.text()).foregroundStyle(AiruStyle.yellow).monospacedDigit()
             }
         case .exporting:

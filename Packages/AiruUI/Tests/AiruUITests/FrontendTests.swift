@@ -108,6 +108,111 @@ import UniformTypeIdentifiers
         }
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["AIRU_RENDER_UI"] == "1", "Optional resize controls render"))
+    func renderResizeControls() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.importFiles([c.fixture("photo.png")]); try await c.model.waitUntilIdle()
+        c.model.setDefaultResize(.resolution(width: 200, height: 200, alignment: .bottomRight))
+        let state = FormatMenuState(value: .jpeg, profile: .airy, jpegAllowed: true, select: { _ in }, selectProfile: { _ in })
+        state.resizeModel = c.model
+        let host = NSHostingView(rootView: FormatMenuContent(state: state, dismiss: {}))
+        host.frame = NSRect(x: 0, y: 0, width: FormatMenuContent.resizePanelWidth, height: 230)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let data = try #require(bitmap.representation(using: .png, properties: [:]))
+        try data.write(to: URL(fileURLWithPath: "/tmp/airu-resize-native.png"))
+    }
+    @Test func singleResolutionEntryPreservesCurrentRatio() throws {
+        var draft = ResolutionDraft(baseWidth: 3000, baseHeight: 2000)
+        draft.width = "1500"
+        var target = try draft.dimensions()
+        #expect(target.width == 1500 && target.height == 1000)
+        draft.width = ""; draft.height = "1200"
+        target = try draft.dimensions()
+        #expect(target.width == 1800 && target.height == 1200)
+        draft.width = "1200"
+        target = try draft.dimensions()
+        #expect(target.width == 1200 && target.height == 1200)
+        _ = try draft.commitDimensions()
+        draft.height = ""
+        target = try draft.dimensions()
+        #expect(target.width == 1200 && target.height == 1200)
+        draft = ResolutionDraft(baseWidth: 3000, baseHeight: 2000)
+        draft.width = ""; draft.height = ""
+        target = try draft.dimensions()
+        #expect(target.width == 3000 && target.height == 2000)
+        var custom = ResolutionDraft(baseWidth: 1000, baseHeight: 1000)
+        custom.height = "750"
+        target = try custom.dimensions()
+        #expect(target.width == 750 && target.height == 750)
+        custom.width = "0"
+        #expect(throws: AiruError.self) { try custom.dimensions() }
+        custom.width = "oops"
+        #expect(throws: AiruError.self) { try custom.dimensions() }
+    }
+    @Test func resizeSettingsUseOriginalsAndInvalidatePreparedResults() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.setDefaultFormat(.png)
+        c.model.importFiles([c.fixture("photo.png"), c.fixture("oriented.jpg")])
+        try await c.model.waitUntilIdle()
+        c.model.setDefaultResize(.scale(50))
+        #expect(c.model.jobs.allSatisfy { $0.requestedResize == .scale(50) && $0.result == nil })
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        for job in c.model.jobs {
+            let original = try #require(job.info)
+            let result = try #require(job.result)
+            let output = try ImageAnalyzer().analyze(result.cachedFileURL)
+            let expected = try ResizeOptions.scale(50).dimensions(width: original.width, height: original.height)
+            #expect(output.width == expected.width && output.height == expected.height)
+        }
+        let first = c.model.jobs[0], completed = c.model.jobs[1]
+        let firstKey = first.result?.cacheKey, completedKey = completed.result?.cacheKey
+        c.model.reset(first); try await c.model.waitUntilIdle()
+        c.model.setDefaultResize(.resolution(width: 80, height: 120))
+        #expect(first.result == nil && first.requestedResize == .resolution(width: 80, height: 120))
+        #expect(completed.result?.cacheKey == completedKey)
+        c.model.setDefaultResize(c.model.defaultResize?.aligned(.bottomRight))
+        #expect(first.requestedResize?.alignment == .bottomRight)
+        #expect(completed.result?.cacheKey == completedKey)
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let resized = try #require(first.result)
+        #expect(resized.cacheKey != firstKey)
+        let exact = try ImageAnalyzer().analyze(resized.cachedFileURL)
+        #expect(exact.width == 80 && exact.height == 120)
+        c.model.reset(first); try await c.model.waitUntilIdle()
+        c.model.setDefaultResize(nil)
+        #expect(first.requestedResize == nil && first.result == nil)
+        c.model.setDefaultResize(.scale(-1))
+        #expect(c.model.defaultResize == nil && c.model.alert?.code == "invalidDimensions")
+    }
+    @Test func resetAllRemainsAvailableUntilLastProcessedFileIsReset() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.setDefaultFormat(.png)
+        c.model.importFiles([c.fixture("photo.png"), c.fixture("photo.jpg")])
+        try await c.model.waitUntilIdle()
+        #expect(!c.model.canResetAll)
+        c.model.exportAll()
+        #expect(!c.model.canResetAll)
+        try await c.model.waitUntilIdle()
+        #expect(c.model.canResetAll)
+        let exports = try c.model.jobs.map { job in
+            let url = try #require(job.exportedURL)
+            return (url, try Data(contentsOf: url))
+        }
+        c.model.reset(c.model.jobs[0]); try await c.model.waitUntilIdle()
+        #expect(!c.model.allCompleted && c.model.canResetAll)
+        c.model.resetAll(); try await c.model.waitUntilIdle()
+        #expect(!c.model.canResetAll)
+        #expect(c.model.jobs.allSatisfy { $0.status == .ready && $0.result == nil && $0.exportedURL == nil })
+        #expect(c.model.jobs.allSatisfy { !$0.compressionRequested && $0.progress == 0 })
+        for (url, bytes) in exports { #expect(try Data(contentsOf: url) == bytes) }
+    }
     @Test func resetRestoresOriginalAndWaitsForAirufy() async throws {
         let c = try Context(); defer { c.cleanup() }
         c.model.importFiles([c.fixture("photo.png"), c.fixture("photo.jpg")])
@@ -255,6 +360,36 @@ import UniformTypeIdentifiers
         try await c.model.waitUntilIdle()
         #expect(c.model.jobs.allSatisfy { $0.status == .cancelled })
         #expect(c.model.jobs.allSatisfy { $0.result == nil })
+    }
+    @Test func stoppingCompressionPreservesCompletedFilesAndAllowsRestart() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.setDefaultFormat(.png)
+        c.model.importFiles([c.fixture("photo.png")])
+        try await c.model.waitUntilIdle()
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let completed = try #require(c.model.jobs.first)
+        #expect(completed.status == .completed)
+        let exportedURL = try #require(completed.exportedURL)
+        let exportedData = try Data(contentsOf: exportedURL)
+
+        c.model.importFiles([c.fixture("photo.jpg")])
+        try await c.model.waitUntilIdle()
+        let pending = try #require(c.model.jobs.first { $0.id != completed.id })
+        #expect(!c.model.isCompressing)
+        c.model.exportAll()
+        #expect(c.model.isCompressing)
+        c.model.cancelAll(); try await c.model.waitUntilIdle()
+        #expect(!c.model.isCompressing)
+        #expect(pending.status == .cancelled && pending.canCompress)
+        #expect(completed.status == .completed && completed.exportedURL == exportedURL)
+        #expect(try Data(contentsOf: exportedURL) == exportedData)
+
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        #expect(pending.status == .completed)
+        #expect(completed.exportedURL == exportedURL)
+        // A stopped export can reuse its already verified compression result.
+        pending.status = .cancelled
+        #expect(pending.canExport)
     }
     @Test func customDestinationUnicodeAndDuplicateImports() async throws {
         let c = try Context(); defer { c.cleanup() }
