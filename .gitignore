@@ -23,3 +23,5 @@ Tests/ReproducedOutput/
 Tests/UIExports/
 Tests/ScrollingInput/
 Tests/end-to-end.ndjson
+Resources/Upscaler/bin/
+Resources/Upscaler/models/

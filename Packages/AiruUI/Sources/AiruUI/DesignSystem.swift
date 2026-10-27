@@ -45,12 +45,19 @@ private struct AiruStyledButton<Label: View>: View {
                             .fill(Color.black.opacity(kind == .primary && hovering && isEnabled ? 0.15 : 0))
                     }
             }
-            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(kind == .primary ? Color(white: 19/255) : AiruStyle.controlBorder, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(kind == .primary ? Color(white: 19/255) : rim, lineWidth: 1))
             .padding(1)
-            .background(kind == .primary ? Color(white: 102/255) : Color(white: 19/255), in: RoundedRectangle(cornerRadius: 10))
+            .background(kind == .primary ? Color(white: 102/255) : Color(white: 16/255), in: RoundedRectangle(cornerRadius: 10))
             .opacity(!isEnabled && kind == .secondary ? 0.45 : 1)
             .contentShape(RoundedRectangle(cornerRadius: 10))
             .onHover { hovering = $0 }
+    }
+    private var rim: Color {
+        switch kind {
+        case .success: Color(red: 19/255, green: 53/255, blue: 12/255)
+        case .destructive: Color(red: 91/255, green: 26/255, blue: 27/255)
+        default: AiruStyle.controlBorder
+        }
     }
     private var foreground: Color {
         switch kind { case .primary: .black; case .secondary: .white; case .success: AiruStyle.green; case .working: AiruStyle.yellow; case .destructive: Color(red: 1, green: 56/255, blue: 60/255) }

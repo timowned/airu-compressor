@@ -40,6 +40,103 @@ import UniformTypeIdentifiers
 }
 
 @MainActor @Suite(.serialized) struct FrontendTests {
+    @Test func compressionUpscaleControlsToggleAndExcludeResize() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        #expect(ApplicationMode.allCases == [.compress, .upscale])
+        c.model.importFiles([c.fixture("photo.jpg")]); try await c.model.waitUntilIdle()
+        let job = try #require(c.model.jobs.first)
+        #expect(job.requestedUpscale == nil)
+        c.model.setUpscaleFactor(2)
+        #expect(c.model.compressionUpscaleFactor == 2 && job.requestedUpscale == 2)
+        #expect(job.result == nil && !job.compressionRequested)
+        c.model.setUpscaleFactor(2)
+        #expect(job.requestedUpscale == nil)
+        c.model.setUpscaleFactor(4)
+        c.model.setDefaultResize(.resolution(width: 100, height: 100))
+        #expect(c.model.compressionUpscaleFactor == nil && job.requestedUpscale == nil)
+        c.model.setUpscaleFactor(2)
+        #expect(c.model.defaultResize == nil && job.requestedResize == nil)
+        try await c.model.waitUntilIdle()
+    }
+    @Test func upscaleWorkspaceIsIndependentAndExportsRealEnhancement() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        c.model.importFiles([c.fixture("photo.jpg")]); try await c.model.waitUntilIdle()
+        let compressJob = try #require(c.model.jobs.first)
+        #expect(c.model.mode == .compress)
+        c.model.mode = .upscale
+        let workspace = c.model.activeWorkspace
+        #expect(workspace !== c.model && workspace.workflow == .upscale && workspace.defaultFormat == .png)
+        let input = try #require(CGImageSourceCreateWithURL(c.fixture("photo.png") as CFURL, nil))
+        let decoded = try #require(CGImageSourceCreateImageAtIndex(input, 0, nil))
+        let small = try ImageResizer.resize(decoded, options: .resolution(width: 24, height: 32))
+        let source = c.root.appendingPathComponent("Small photo.png")
+        let dest = try #require(CGImageDestinationCreateWithURL(source as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, small, nil); #expect(CGImageDestinationFinalize(dest))
+        c.model.importFiles([source]); try await c.model.waitUntilIdle()
+        #expect(workspace.jobs.count == 1 && c.model.jobs.count == 1)
+        #expect(workspace.jobs[0].requestedUpscale == 2)
+        c.model.exportAll(); try await c.model.waitUntilIdle()
+        let job = workspace.jobs[0]
+        #expect(job.status == .completed && job.result?.options.upscale == 2)
+        let url = try #require(job.exportedURL)
+        let info = try ImageAnalyzer().analyze(url)
+        #expect(info.width == 48 && info.height == 64)
+        #expect(url.lastPathComponent == "Small photo-upscaled-2x.png")
+        #expect(compressJob.result == nil && compressJob.status == .ready)
+        if ProcessInfo.processInfo.environment["AIRU_RENDER_UI"] == "1" {
+            let host = NSHostingView(rootView: MainWindow(model: c.model).ignoresSafeArea())
+            host.safeAreaRegions = []
+            host.frame = NSRect(x: 0, y: 0, width: 640, height: 430)
+            let window = NSWindow(contentRect: host.frame,
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            defer { window.close() }
+            host.layoutSubtreeIfNeeded(); try await Task.sleep(for: .milliseconds(100))
+            let bitmap = try #require(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let data = try #require(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: URL(fileURLWithPath: "/tmp/airu-upscale-workspace.png"))
+        }
+        workspace.setUpscaleFactor(4)
+        #expect(job.result?.options.upscale == 2)
+        workspace.resetAll(); try await workspace.waitUntilIdle()
+        #expect(job.requestedUpscale == 4 && job.result == nil)
+        c.model.mode = .compress
+        #expect(c.model.activeWorkspace === c.model && c.model.jobs[0].id == compressJob.id)
+        c.model.mode = .upscale
+        #expect(c.model.activeWorkspace === workspace && workspace.jobs[0].id == job.id)
+    }
+    @Test func trafficLightsKeepWindowCornerInsetsAcrossContentAndActivation() async throws {
+        let c = try Context(); defer { c.cleanup() }
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 430),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.titleVisibility = .hidden; window.titlebarAppearsTransparent = true
+        let host = NSHostingView(rootView: MainWindow(model: c.model).ignoresSafeArea())
+        host.safeAreaRegions = []
+        window.contentView = host
+        defer { window.close() }
+        for (index, size) in [NSSize(width: 640, height: 430), NSSize(width: 900, height: 600), NSSize(width: 640, height: 430)].enumerated() {
+            if index == 1 { c.model.importFiles([c.fixture("photo.png")]); try await c.model.waitUntilIdle() }
+            window.setContentSize(size)
+            host.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+            // Force the native titlebar to take its buttons back, as AppKit can do on activation.
+            if index == 2, let button = window.standardWindowButton(.closeButton),
+               let nativeTitlebar = window.contentView?.superview?.subviews.first(where: { $0 !== host }) {
+                button.removeFromSuperview(); nativeTitlebar.addSubview(button)
+            }
+            NotificationCenter.default.post(name: NSWindow.didBecomeKeyNotification, object: window)
+            NotificationCenter.default.post(name: NSWindow.didUpdateNotification, object: window)
+            try await Task.sleep(for: .milliseconds(60))
+            for (buttonIndex, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
+                let button = try #require(window.standardWindowButton(kind))
+                let frame = host.convert(button.bounds, from: button)
+                #expect(abs(frame.minX - (22 + CGFloat(buttonIndex) * 23)) < 0.5)
+                #expect(abs((host.isFlipped ? frame.minY : host.bounds.maxY - frame.maxY) - 22) < 0.5)
+            }
+        }
+    }
     @Test func trafficLightsStayAnchoredAfterNativeResizePass() async throws {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 430),

@@ -136,12 +136,12 @@ struct ImageRowView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(job.filename)
         .accessibilityValue(accessibilityStatus)
-        .accessibilityAction(named: "Compress") { model.export(job) }
+        .accessibilityAction(named: model.workflow == .upscale ? "Upscale" : "Compress") { model.export(job) }
         .accessibilityAction(named: "Remove") { model.remove(job) }
         .accessibilityAction(named: "Reveal in Finder", revealInFinder)
         .accessibilityAction(named: "Reset to original") { model.reset(job) }
         .contextMenu {
-            Button("Compress") { model.export(job) }.disabled(!job.canExport && !job.canCompress)
+            Button(model.workflow == .upscale ? "Upscale" : "Compress") { model.export(job) }.disabled(!job.canExport && !job.canCompress)
             Menu("Output format") {
                 ForEach(OutputFormat.allCases, id: \.self) { format in
                     Button(format.label) { model.setFormat(format, for: job) }.disabled(format == .jpeg && !job.canUseJPEG)
@@ -308,7 +308,8 @@ struct ImageRowView: View {
         case .ready, .completed:
             if let result = job.result {
                 FileSizeComparison(result: result)
-                    .help("\(job.outputFormatLabel) · \(result.alreadyOptimized ? "Already optimized" : "Verified quality")")
+                    .help(result.options.upscale.map { "Real-ESRGAN \($0)× · Encoding verified against the enhanced reference" }
+                          ?? "\(job.outputFormatLabel) · \(result.alreadyOptimized ? "Already optimized" : "Verified quality")")
             } else if let info = job.info {
                 Text(FileSizeText.format(info.fileSize)).font(AiruStyle.text(13, .light))
                     .foregroundStyle(AiruStyle.muted)

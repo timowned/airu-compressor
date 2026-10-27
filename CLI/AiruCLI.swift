@@ -41,6 +41,9 @@ private struct Arguments {
             case "--mode":
                 guard let mode = PNGCompressionMode(rawValue: try value()) else { throw AiruError("usage", "Mode must be airy or superlight") }
                 options.pngMode = mode
+            case "--upscale":
+                guard let factor = Int(try value()), [2, 4].contains(factor) else { throw AiruError("usage", "Upscale must be 2 or 4") }
+                options.upscale = factor
             case "--alignment":
                 guard let value = CropAlignment(rawValue: try value()) else { throw AiruError("usage", "Invalid crop alignment") }
                 alignment = value
@@ -178,6 +181,7 @@ private actor Output {
             airu batch FILE... [--destination DIR] [--concurrency 2] [OPTIONS]
             airu export --key SHA256 [--cache DIR] [--destination DIR]
             airu doctor --tools DIR
+            UPSCALE: --upscale 2|4 (offline Real-ESRGAN x4plus; exclusive with resize)
             RESIZE: --scale PERCENT or --width PIXELS --height PIXELS (aspect-fill crop; --alignment defaults to center)
             OPTIONS: --tools DIR --cache DIR --mode airy|superlight --score N --candidates 24 --timeout 180 --threads 2
             Airy: lossless PNG, score 90 for other formats. Superlight: palette PNG, score 80 (minimum).

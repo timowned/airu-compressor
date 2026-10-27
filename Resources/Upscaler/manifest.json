@@ -1,0 +1,11 @@
+{
+  "archiveSHA256": "e0ad05580abfeb25f8d8fb55aaf7bedf552c375b5b4d9bd3c8d59764d2cc333a",
+  "model": "realesrgan-x4plus",
+  "sha256": {
+    "bin/realesrgan-ncnn-vulkan": "33e67bb49e264a5bf169c58b15d8bf9fd2dd096c141d1a4dddb01a0d15fa5046",
+    "models/realesrgan-x4plus.bin": "713ee713b0353afaa27976f0563a64a5043bd70b9bd8936c2e26e25ebcdbcddf",
+    "models/realesrgan-x4plus.param": "35330ececcea33b6c397a72548e788d5d53becee4734c50b7fada36e89f10a86"
+  },
+  "source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-macos.zip",
+  "version": "20220424"
+}

@@ -1,6 +1,6 @@
 # Native frontend integration
 
-The implemented Auto Mode lives in `Packages/AiruUI`; the compression engine remains unchanged in `Packages/AiruCore`. `App/AiruApp.swift` owns the native NSWindow, NSHostingView, menu bar, document-open handling and application lifecycle. Manual mode displays only “Coming soon...”.
+The implemented Auto Mode lives in `Packages/AiruUI`; the compression engine remains unchanged in `Packages/AiruCore`. `App/AiruApp.swift` owns the native NSWindow, NSHostingView, menu bar, document-open handling and application lifecycle. Top-level navigation is now Compress/Upscale. Upscale is a separate retained `CompressionViewModel` workspace, using the same native CLI service and controls with 2×/4× selection.
 
 ## Design source
 

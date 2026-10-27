@@ -53,7 +53,7 @@ import AiruUI
         application.submenu?.addItem(withTitle: "Quit Airu", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let file = NSMenuItem(); bar.addItem(file); file.submenu = NSMenu(title: "File")
         let add = file.submenu!.addItem(withTitle: "Add Images…", action: #selector(addImages), keyEquivalent: "o"); add.target = self
-        let save = file.submenu!.addItem(withTitle: "Compress All", action: #selector(compressAll), keyEquivalent: "s"); save.target = self
+        let save = file.submenu!.addItem(withTitle: "Airufy All", action: #selector(compressAll), keyEquivalent: "s"); save.target = self
         let folder = file.submenu!.addItem(withTitle: "Choose Export Folder…", action: #selector(chooseFolder), keyEquivalent: "e")
         folder.target = self; folder.keyEquivalentModifierMask = [.command, .shift]
         file.submenu?.addItem(.separator())

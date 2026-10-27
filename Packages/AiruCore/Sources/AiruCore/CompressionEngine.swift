@@ -9,7 +9,12 @@ public struct CompressionEngine: Sendable {
         try Task.checkCancellation()
         await progress?(ProgressUpdate(.analyzing, 0, "Reading and validating image"))
         let info = try ImageAnalyzer().analyze(source)
-        let key = try CompressionCache.key(source: info, options: options, toolchainFingerprint: tools.fingerprint())
+        if options.upscale != nil {
+            _ = try ResizeOptions.scale(400).dimensions(width: info.width, height: info.height)
+        }
+        let upscaler = RealESRGANUpscaler(directory: tools.directory.deletingLastPathComponent().appendingPathComponent("Upscaler"))
+        let fingerprint = try tools.fingerprint() + (options.upscale == nil ? "" : upscaler.fingerprint())
+        let key = try CompressionCache.key(source: info, options: options, toolchainFingerprint: fingerprint)
         if let existing = try await cache.lookup(key) {
             await progress?(ProgressUpdate(.ready, 1, "Reused verified cached output")); return existing
         }
@@ -17,6 +22,16 @@ public struct CompressionEngine: Sendable {
         try Files.directory(work)
         defer { Files.remove(work) }
         var referenceInfo = info
+        if let factor = options.upscale {
+            await progress?(ProgressUpdate(.optimizing, 0, "Real-ESRGAN is reconstructing detail"))
+            let decoded = try await ImageDecoder.decode(source, format: info.format, tools: tools, workspace: work,
+                                                       deadline: Date().addingTimeInterval(options.timeoutSeconds))
+            let image = try await upscaler.upscale(decoded, factor: factor, workspace: work, timeout: options.timeoutSeconds)
+            let reference = work.appendingPathComponent("upscaled-reference.png")
+            try Raster.writePNG(image, to: reference)
+            referenceInfo = try ImageAnalyzer().analyze(reference)
+            await progress?(ProgressUpdate(.optimizing, 0, "Real-ESRGAN finished; verifying output encoding"))
+        }
         if let resize = options.resize {
             let target = try resize.dimensions(width: info.width, height: info.height)
             if target.width != info.width || target.height != info.height {
@@ -44,7 +59,7 @@ public struct CompressionEngine: Sendable {
         let (best, records) = try await PerceptualCompressionOptimizer(tools: tools).optimize(info: referenceInfo, options: options, workspace: work, progress: progress)
         try Task.checkCancellation()
         let transformed = referenceInfo.sourceURL != info.sourceURL
-        if transformed && options.format == .auto && (best == nil || best!.record.bytes >= info.fileSize) {
+        if transformed && options.upscale == nil && options.format == .auto && (best == nil || best!.record.bytes >= info.fileSize) {
             throw AiruError("noSmallerResizedOutput", "No verified resized output is smaller than the original. Select an explicit format to allow a larger file.")
         }
         let unchanged = !transformed && options.format == .auto && (best == nil || best!.record.bytes >= info.fileSize)

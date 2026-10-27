@@ -8,7 +8,7 @@ public enum CompressionProfile: String, CaseIterable, Codable, Sendable {
     public var minimumScore: Double { self == .airy ? 90 : 80 }
 }
 
-public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto", manual = "Manual" }
+public enum ApplicationMode: String, CaseIterable, Sendable { case compress = "Compress", upscale = "Upscale" }
 
 @MainActor @Observable public final class ImageJobViewModel: Identifiable {
     public let id = UUID()
@@ -23,6 +23,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     public internal(set) var exportedURL: URL?
     public internal(set) var error: AiruError?
     public internal(set) var destinationOverride: URL?
+    var requestedUpscale: Int?
     var requestedResize: ResizeOptions?
     var compressionRequested = false
     var followsDefaultFormat = true
@@ -54,7 +55,18 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
 }
 
 @MainActor @Observable public final class CompressionViewModel {
-    public var mode: ApplicationMode = .auto
+    public var mode: ApplicationMode = .compress
+    public let workflow: ApplicationMode
+    public private(set) var upscaleFactor = 2
+    public private(set) var compressionUpscaleFactor: Int?
+    private var upscaleWorkspace: CompressionViewModel?
+    public var activeWorkspace: CompressionViewModel {
+        guard workflow == .compress && mode == .upscale else { return self }
+        if let upscaleWorkspace { return upscaleWorkspace }
+        let workspace = CompressionViewModel(service: service, destinations: destinations, concurrencyLimit: 1, workflow: .upscale)
+        upscaleWorkspace = workspace
+        return workspace
+    }
     public private(set) var jobs: [ImageJobViewModel] = []
     public private(set) var isPresentingImportAnalysis = false
     private var importAnalysisTask: Task<Void, Never>?
@@ -68,7 +80,9 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
     private var running: [UUID: (UUID, Task<Void, Never>)] = [:]
     private var exports: [UUID: Task<Void, Never>] = [:]
     private var pendingExports: [UUID] = []
-    public init(service: CompressionService = .bundled(), destinations: ExportDestinationManager? = nil, concurrencyLimit: Int = 2) {
+    public init(service: CompressionService = .bundled(), destinations: ExportDestinationManager? = nil, concurrencyLimit: Int = 2, workflow: ApplicationMode = .compress) {
+        self.workflow = workflow; mode = workflow
+        if workflow == .upscale { defaultFormat = .png }
         self.service = service; self.destinations = destinations ?? ExportDestinationManager()
         self.concurrencyLimit = max(1, min(4, concurrencyLimit))
     }
@@ -90,6 +104,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         }
     }
     public func importFiles(_ urls: [URL], showAnalysisScreen: Bool = false) {
+        if activeWorkspace !== self { activeWorkspace.importFiles(urls, showAnalysisScreen: showAnalysisScreen); return }
         var identities = Set(jobs.map { $0.sourceURL.resolvingSymlinksInPath().standardizedFileURL.path })
         var imported: [ImageJobViewModel] = []
         for url in urls where url.isFileURL {
@@ -97,11 +112,12 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
             guard identities.insert(source.resolvingSymlinksInPath().path).inserted else { continue }
             let job = ImageJobViewModel(source: source, format: defaultFormat, profile: defaultProfile)
             job.requestedResize = defaultResize
+            job.requestedUpscale = workflow == .upscale ? upscaleFactor : compressionUpscaleFactor
             imported.append(job)
         }
         jobs.insert(contentsOf: imported, at: 0)
         if showAnalysisScreen && !imported.isEmpty { presentImportAnalysis(for: Set(imported.map(\.id))) }
-        mode = .auto; schedule()
+        schedule()
     }
     private func presentImportAnalysis(for ids: Set<UUID>) {
         importAnalysisTask?.cancel()
@@ -122,6 +138,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         }
     }
     public func browseFiles() {
+        if activeWorkspace !== self { activeWorkspace.browseFiles(); return }
         let panel = NSOpenPanel()
         panel.title = "Add images to Airu"; panel.prompt = "Add Images"
         panel.canChooseDirectories = false; panel.allowsMultipleSelection = true
@@ -151,6 +168,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         job.requestedFormat = defaultFormat; job.requestedProfile = defaultProfile
         job.followsDefaultFormat = true
         job.requestedResize = defaultResize
+        job.requestedUpscale = workflow == .upscale ? upscaleFactor : compressionUpscaleFactor
         job.status = .queued
         // Revalidate the original; compression still waits for another Airufy click.
         schedule()
@@ -159,15 +177,32 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         guard canResetAll else { return }
         for job in jobs where job.canReset { reset(job) }
     }
+    public func setUpscaleFactor(_ factor: Int) {
+        guard [2, 4].contains(factor), !isCompressing else { return }
+        let selected: Int?
+        if workflow == .upscale {
+            guard upscaleFactor != factor else { return }
+            upscaleFactor = factor
+            selected = factor
+        } else {
+            compressionUpscaleFactor = compressionUpscaleFactor == factor ? nil : factor
+            selected = compressionUpscaleFactor
+            if selected != nil { defaultResize = nil }
+        }
+        for job in jobs where job.status != .completed {
+            reprepare(job, format: job.requestedFormat, resize: selected != nil ? .some(nil) : nil, upscale: .some(selected))
+        }
+    }
     public func setDefaultResize(_ resize: ResizeOptions?) {
         do {
             try resize?.validate()
             for job in jobs where job.status != .completed {
                 if let info = job.info { _ = try resize?.dimensions(width: info.width, height: info.height) }
             }
+            if resize != nil { compressionUpscaleFactor = nil }
             defaultResize = resize
             for job in jobs where job.status != .completed {
-                reprepare(job, format: job.requestedFormat, resize: .some(resize))
+                reprepare(job, format: job.requestedFormat, resize: .some(resize), upscale: resize != nil ? .some(nil) : nil)
             }
         } catch { alert = AiruError.wrapping(error) }
     }
@@ -182,14 +217,16 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
             reprepare(job, format: job.requestedFormat, profile: profile)
         }
     }
-    private func reprepare(_ job: ImageJobViewModel, format: OutputFormat, profile: CompressionProfile? = nil, resize: ResizeOptions?? = nil) {
+    private func reprepare(_ job: ImageJobViewModel, format: OutputFormat, profile: CompressionProfile? = nil, resize: ResizeOptions?? = nil, upscale: Int?? = nil) {
+        let upscale = upscale ?? job.requestedUpscale
         let resize = resize ?? job.requestedResize
         let profile = profile ?? job.requestedProfile
-        guard job.requestedResize != resize || job.requestedProfile != profile || job.requestedFormat != format || job.status == .failed || job.status == .cancelled else { return }
+        guard job.requestedUpscale != upscale || job.requestedResize != resize || job.requestedProfile != profile || job.requestedFormat != format || job.status == .failed || job.status == .cancelled else { return }
         running[job.id]?.1.cancel(); exports[job.id]?.cancel()
         pendingExports.removeAll { $0 == job.id }
         job.requestedProfile = profile
         job.requestedResize = resize
+        job.requestedUpscale = upscale
         job.compressionRequested = false
         job.generation = UUID(); job.requestedFormat = format; job.result = nil; job.error = nil
         // Changing options does not invalidate metadata already read from the original.
@@ -235,7 +272,7 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
                     }
                     job.status = .optimizing
                     let result = try await service.prepare(job.sourceURL, format: job.requestedFormat, minimumScore: job.requestedProfile.minimumScore,
-                                                           pngMode: job.requestedProfile == .superlight ? .superlight : .airy, resize: job.requestedResize) { [weak self, weak job] update in
+                                                           pngMode: job.requestedProfile == .superlight ? .superlight : .airy, resize: job.requestedResize, upscale: job.requestedUpscale) { [weak self, weak job] update in
                         await self?.receive(update, job: job, generation: token)
                     }
                     try Task.checkCancellation()
@@ -307,10 +344,12 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         }
     }
     public func exportAll() {
+        if activeWorkspace !== self { activeWorkspace.exportAll(); return }
         if allCompleted { revealExports(); return }
         for job in jobs where job.status != .completed && (job.canCompress || job.canExport) { export(job) }
     }
     public func chooseDestination(for job: ImageJobViewModel? = nil) async {
+        if activeWorkspace !== self { await activeWorkspace.chooseDestination(for: job); return }
         do {
             let url = try await destinations.chooseFolder(startingAt: job?.destinationOverride)
             if let job {
@@ -328,9 +367,14 @@ public enum ApplicationMode: String, CaseIterable, Sendable { case auto = "Auto"
         if !urls.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(urls) }
     }
     public func waitUntilIdle() async throws {
+        if let upscaleWorkspace { try await upscaleWorkspace.waitUntilIdle() }
         while !running.isEmpty || !exports.isEmpty || !pendingExports.isEmpty || importAnalysisTask != nil { try Task.checkCancellation(); try await Task.sleep(for: .milliseconds(25)) }
     }
     public func cancelAll() {
+        upscaleWorkspace?.cancelAll()
+        stopWorkspace()
+    }
+    public func stopWorkspace() {
         importAnalysisTask?.cancel(); importAnalysisTask = nil; isPresentingImportAnalysis = false
         // Prevent completion cleanup from scheduling queued work during shutdown.
         for job in jobs where job.status == .queued { job.status = .cancelled }

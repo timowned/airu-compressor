@@ -39,7 +39,8 @@ public actor CompressionCache {
             throw AiruError("sourceChanged", "Source changed after preparation")
         }
         let info = try ImageAnalyzer().analyze(url)
-        let target = try result.options.resize?.dimensions(width: result.source.width, height: result.source.height)
+        let resize = result.options.upscale.map { ResizeOptions.scale(Double($0) * 100) } ?? result.options.resize
+        let target = try resize?.dimensions(width: result.source.width, height: result.source.height)
         guard info.width == (target?.width ?? result.source.width), info.height == (target?.height ?? result.source.height), info.format == result.selectedFormat,
               !(result.referenceHasTransparency ?? result.source.hasTransparency) || info.hasTransparency else { throw AiruError("cacheInvalid", "Cached image validation failed") }
         guard (result.verification == .unchangedOriginal && result.outputSHA256 == result.source.contentSHA256) ||

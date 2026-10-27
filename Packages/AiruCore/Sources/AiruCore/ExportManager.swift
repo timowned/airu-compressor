@@ -31,7 +31,7 @@ public actor ExportManager {
         let existing = Set(try Files.fm.contentsOfDirectory(atPath: directory.path).map(folded))
         while true {
             try Task.checkCancellation()
-            let suffix = "-comp" + (index == 1 ? "" : "-\(index)") + "." + result.selectedFormat.fileExtension
+            let suffix = (result.options.upscale.map { "-upscaled-\($0)x" } ?? "-comp") + (index == 1 ? "" : "-\(index)") + "." + result.selectedFormat.fileExtension
             let name = try Self.filename(stem: stem, suffix: suffix, byteLimit: shortenNames ? nameByteLimit : nil)
             if existing.contains(folded(name)) { index += 1; continue }
             let destination = directory.appendingPathComponent(name)

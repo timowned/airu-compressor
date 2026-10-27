@@ -51,6 +51,7 @@ public struct OptimizationOptions: Codable, Sendable, Equatable {
     public var maxCandidates: Int
     public var timeoutSeconds: Double
     public var encoderThreads: Int
+    public var upscale: Int? = nil
     public var resize: ResizeOptions? = nil
     public var pngMode: PNGCompressionMode
     public init(format: OutputFormat = .auto, minimumScore: Double = 90, maxCandidates: Int = 24,
@@ -60,6 +61,9 @@ public struct OptimizationOptions: Codable, Sendable, Equatable {
         self.pngMode = pngMode
     }
     public func validate() throws {
+        if let upscale {
+            guard [2, 4].contains(upscale), resize == nil else { throw AiruError("invalidOptions", "Upscale requires 2 or 4 and cannot be combined with resize") }
+        }
         try resize?.validate()
         guard minimumScore.isFinite, (0...100).contains(minimumScore), (4...64).contains(maxCandidates),
               timeoutSeconds.isFinite, (1...3600).contains(timeoutSeconds), (1...8).contains(encoderThreads) else {

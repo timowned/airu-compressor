@@ -4,19 +4,25 @@ import UniformTypeIdentifiers
 import AiruCore
 
 public struct MainWindow: View {
-    @Bindable private var model: CompressionViewModel
+    @Bindable private var rootModel: CompressionViewModel
+    public init(model: CompressionViewModel) { rootModel = model }
+    public var body: some View {
+        WorkspaceWindow(model: rootModel.activeWorkspace, selectedMode: $rootModel.mode)
+    }
+}
+
+private struct WorkspaceWindow: View {
+    @Bindable var model: CompressionViewModel
+    @Binding var selectedMode: ApplicationMode
+    @Namespace private var tabSelection
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isDropTarget = false
     @State private var formatMenuPresented = false
-    public init(model: CompressionViewModel) { self.model = model }
     public var body: some View {
         VStack(spacing: 0) {
             header
             Group {
-                if model.mode == .manual {
-                    Text("Coming soon...")
-                        .font(AiruStyle.text(16, .medium)).foregroundStyle(AiruStyle.muted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if model.isPresentingImportAnalysis {
+                if model.isPresentingImportAnalysis {
                     ImportAnalysisView()
                         .padding([.horizontal, .bottom], AiruStyle.inset).padding(.top, 16)
                 } else if model.jobs.isEmpty {
@@ -43,12 +49,16 @@ public struct MainWindow: View {
                 }
             }
         }
+        .onChange(of: selectedMode) { _, _ in
+            isDropTarget = false
+            formatMenuPresented = false
+        }
         .background(AiruStyle.background)
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .frame(minWidth: 640, minHeight: 430)
         .contentShape(Rectangle())
-        .onDrop(of: model.mode == .auto && !model.jobs.isEmpty ? [UTType.fileURL.identifier] : [],
+        .onDrop(of: !model.jobs.isEmpty ? [UTType.fileURL.identifier] : [],
                 isTargeted: $isDropTarget, perform: acceptDrop)
         .alert("Airu", isPresented: Binding(get: { model.alert != nil }, set: { if !$0 { model.alert = nil } })) {
             Button("OK") { model.alert = nil }
@@ -64,12 +74,19 @@ public struct MainWindow: View {
         ZStack {
             HStack(spacing: 0) {
                 ForEach(ApplicationMode.allCases, id: \.self) { mode in
-                    Button { model.mode = mode } label: {
+                    Button {
+                        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3)) { selectedMode = mode }
+                    } label: {
                         Text(mode.rawValue).font(AiruStyle.text(14))
                             .padding(.horizontal, 12).frame(height: 32)
-                            .background(model.mode == mode ? Color.black.opacity(0.4) : .clear, in: Capsule())
+                            .background {
+                                if selectedMode == mode {
+                                    Capsule().fill(Color.black.opacity(0.4))
+                                        .matchedGeometryEffect(id: "selected-tab", in: tabSelection)
+                                }
+                            }
                     }
-                    .buttonStyle(.plain).accessibilityAddTraits(model.mode == mode ? .isSelected : [])
+                    .buttonStyle(.plain).accessibilityAddTraits(selectedMode == mode ? .isSelected : [])
                     .accessibilityIdentifier("mode-\(mode.rawValue)")
                 }
             }
@@ -95,26 +112,42 @@ public struct MainWindow: View {
         }
     }
     private var footer: some View {
-        HStack(alignment: .bottom, spacing: 12) {
+        HStack(alignment: .bottom, spacing: 10) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Compress to").font(.system(size: 13, weight: .regular)).foregroundStyle(.white.opacity(0.8))
+                Text(model.workflow == .upscale ? "Save as" : "Compress").font(.system(size: 13, weight: .regular)).foregroundStyle(.white.opacity(0.5))
                     .frame(height: 9)
                     .opacity(formatMenuPresented ? 0 : 1)
                     .accessibilityHidden(formatMenuPresented)
                     .animation(.easeInOut(duration: 0.16), value: formatMenuPresented)
                 FormatSelector(value: model.defaultFormat, profile: model.defaultProfile,
-                               caption: "Default output format", resizeModel: model, jpegAllowed: model.canUseJPEG,
+                               caption: "Default output format", resizeModel: model.workflow == .compress ? model : nil, jpegAllowed: model.canUseJPEG,
                                onPresentationChange: { formatMenuPresented = $0 },
                                select: model.setDefaultFormat, selectProfile: model.setDefaultProfile)
                     .accessibilityIdentifier("default-format")
             }
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Upscale").font(.system(size: 13)).foregroundStyle(.white.opacity(0.5)).frame(height: 9)
+                HStack(spacing: 2) {
+                    ForEach([2, 4], id: \.self) { factor in
+                        Button { model.setUpscaleFactor(factor) } label: {
+                            Text("\(factor)×").font(AiruStyle.text(13, .medium)).frame(width: 30, height: 30)
+                                .background((model.workflow == .upscale ? model.upscaleFactor : model.compressionUpscaleFactor) == factor ? Color(white: 0.2) : .clear,
+                                            in: RoundedRectangle(cornerRadius: 7))
+                        }.buttonStyle(.plain).accessibilityLabel("Upscale \(factor) times")
+                            .accessibilityAddTraits((model.workflow == .upscale ? model.upscaleFactor : model.compressionUpscaleFactor) == factor ? .isSelected : [])
+                    }
+                }
+                .padding(4).background(AiruStyle.control, in: RoundedRectangle(cornerRadius: 9))
+                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(AiruStyle.controlBorder))
+                .help("Real-ESRGAN x4plus · offline AI enhancement")
+            }
             DestinationPicker(url: model.destinations.defaultURL) { Task { await model.chooseDestination() } }
             Spacer(minLength: 0)
             if model.isCompressing {
-                Button("Stop", action: model.cancelAll)
+                Button("Stop", action: model.stopWorkspace)
                     .buttonStyle(AiruButtonStyle(kind: .destructive))
-                    .help("Stop current compression")
-                    .accessibilityLabel("Stop compression")
+                    .help(model.workflow == .upscale ? "Stop current upscale" : "Stop current compression")
+                    .accessibilityLabel(model.workflow == .upscale ? "Stop upscaling" : "Stop compression")
                     .accessibilityIdentifier("stop-compression")
             }
             if model.canResetAll {
@@ -128,16 +161,13 @@ public struct MainWindow: View {
                 .accessibilityLabel("Reset All")
                 .accessibilityIdentifier("reset-all")
             }
-            Button(action: model.exportAll) {
-                HStack(spacing: 5) {
-                    if model.isCompressing { AiruSpinner(button: true) }
-                    Text(model.allCompleted ? "Airufied!" : (model.isCompressing ? "Airufying..." : "Airufy"))
-                }
+            if !model.isCompressing {
+                Button(model.allCompleted ? "Airufied!" : "Airufy", action: model.exportAll)
+                    .buttonStyle(AiruButtonStyle(kind: model.allCompleted ? .success : .primary))
+                    .disabled(!model.allCompleted && (!model.hasReadyFiles || model.isBusy))
+                    .accessibilityLabel(model.allCompleted ? "Reveal exported images in Finder" : (model.workflow == .upscale ? "Upscale all ready images" : "Compress all ready images"))
+                    .accessibilityIdentifier("compress-all")
             }
-            .buttonStyle(AiruButtonStyle(kind: model.allCompleted ? .success : (model.isCompressing ? .working : .primary)))
-            .disabled(!model.allCompleted && (!model.hasReadyFiles || model.isBusy))
-            .accessibilityLabel(model.allCompleted ? "Reveal exported images in Finder" : "Compress all ready images")
-            .accessibilityIdentifier("compress-all")
         }
     }
     private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -288,7 +318,8 @@ final class TrafficLightContainer: NSView {
         NotificationCenter.default.removeObserver(self)
         guard let window else { return }
         for name in [NSWindow.didResizeNotification, NSWindow.didEndLiveResizeNotification,
-                     NSWindow.didChangeBackingPropertiesNotification] {
+                     NSWindow.didChangeBackingPropertiesNotification, NSWindow.didBecomeKeyNotification,
+                     NSWindow.didBecomeMainNotification, NSWindow.didUpdateNotification] {
             NotificationCenter.default.addObserver(self, selector: #selector(schedulePositioning), name: name, object: window)
         }
         for (index, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
@@ -304,7 +335,13 @@ final class TrafficLightContainer: NSView {
     }
     deinit { NotificationCenter.default.removeObserver(self) }
     @objc private func schedulePositioning() {
-        guard !positioning, !refreshScheduled else { return }
+        guard !positioning, !refreshScheduled, let window else { return }
+        let kinds: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        let needsRepair = kinds.enumerated().contains { index, kind in
+            guard let button = window.standardWindowButton(kind) else { return false }
+            return button.superview !== self || button.frame != NSRect(x: CGFloat(index) * 23, y: 0, width: 14, height: 14)
+        }
+        guard needsRepair else { return }
         refreshScheduled = true
         // AppKit can reposition standard window buttons after SwiftUI has laid out
         // their custom container. Restore them after that native resize pass finishes.
@@ -319,7 +356,18 @@ final class TrafficLightContainer: NSView {
         super.layout()
         positioning = true
         defer { positioning = false }
-        for (index, button) in subviews.compactMap({ $0 as? NSButton }).enumerated() {
+        guard let window else { return }
+        for (index, kind) in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton].enumerated() {
+            guard let button = window.standardWindowButton(kind) else { continue }
+            // AppKit can reclaim or replace standard buttons during titlebar updates.
+            if button.superview !== self {
+                button.removeFromSuperview(); addSubview(button)
+                button.autoresizingMask = []
+                button.postsFrameChangedNotifications = true
+                NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification, object: button)
+                NotificationCenter.default.addObserver(self, selector: #selector(schedulePositioning),
+                    name: NSView.frameDidChangeNotification, object: button)
+            }
             button.frame = NSRect(x: CGFloat(index) * 23, y: 0, width: 14, height: 14)
         }
     }
